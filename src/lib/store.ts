@@ -1,0 +1,71 @@
+import { create } from 'zustand';
+
+export interface UserState {
+  id: string;
+  name: string;
+  username: string;
+  role: 'ADMIN' | 'CASHIER';
+}
+
+export interface ShiftState {
+  id: string;
+  userId: string;
+  floatCash: number;
+  expectedCash: number;
+  expectedInstaPay: number;
+  expectedVisa: number;
+  openedAt: string;
+}
+
+interface AppStore {
+  user: UserState | null;
+  activeShift: ShiftState | null;
+  isOnline: boolean;
+  activeHallId: string | null;
+  activeTableId: string | null; // active table currently being viewed in POS
+  
+  setUser: (user: UserState | null) => void;
+  setActiveShift: (shift: ShiftState | null) => void;
+  setIsOnline: (status: boolean) => void;
+  setActiveHallId: (hallId: string | null) => void;
+  setActiveTableId: (tableId: string | null) => void;
+  logout: () => void;
+}
+
+export const useAppStore = create<AppStore>((set) => ({
+  user: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('dn_user') || 'null') : null,
+  activeShift: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('dn_shift') || 'null') : null,
+  isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  activeHallId: null,
+  activeTableId: null,
+
+  setUser: (user) => {
+    if (user) {
+      localStorage.setItem('dn_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('dn_user');
+    }
+    set({ user });
+  },
+
+  setActiveShift: (shift) => {
+    if (shift) {
+      localStorage.setItem('dn_shift', JSON.stringify(shift));
+    } else {
+      localStorage.removeItem('dn_shift');
+    }
+    set({ activeShift: shift });
+  },
+
+  setIsOnline: (isOnline) => set({ isOnline }),
+  
+  setActiveHallId: (activeHallId) => set({ activeHallId }),
+  
+  setActiveTableId: (activeTableId) => set({ activeTableId }),
+
+  logout: () => {
+    localStorage.removeItem('dn_user');
+    localStorage.removeItem('dn_shift');
+    set({ user: null, activeShift: null, activeHallId: null, activeTableId: null });
+  },
+}));

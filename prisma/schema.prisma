@@ -1,0 +1,192 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Security & User Roles
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String   // Hashed password
+  name      String
+  role      String   // "ADMIN" | "CASHIER"
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  shifts    Shift[]
+  logs      UserLog[]
+}
+
+// 2. Menu Items & Modifiers
+model Category {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  items     Item[]
+}
+
+model Item {
+  id          String   @id @default(uuid())
+  name        String
+  price       Float
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  recipe      Recipe[]
+  orderItems  SalesOrderItem[]
+}
+
+model Modifier {
+  id          String   @id @default(uuid())
+  name        String   // e.g., "Extra Milk", "No Sugar"
+  priceImpact Float    @default(0.0)
+  
+  recipe      RecipeModifier[]
+  orderModifiers SalesOrderItemModifier[]
+}
+
+// 3. Raw Materials & Inventory
+model RawMaterial {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  stockQty      Float    @default(0.0) // Current stock level
+  minStockLevel Float    @default(0.0) // Reorder point warning
+  purchaseUnit  String   // e.g., "kg", "liter", "box"
+  deductUnit    String   // e.g., "g", "ml", "unit"
+  conversionFactor Float @default(1.0) // 1 PurchaseUnit = X DeductUnits (e.g. 1kg = 1000g)
+  
+  recipes       Recipe[]
+  recipesMod    RecipeModifier[]
+  wastageLogs   WastageLog[]
+}
+
+model Recipe {
+  id            String      @id @default(uuid())
+  itemId        String
+  item          Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  quantity      Float       // Amount of rawMaterial needed (in deductUnit)
+}
+
+model RecipeModifier {
+  id            String      @id @default(uuid())
+  modifierId    String
+  modifier      Modifier    @relation(fields: [modifierId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  quantity      Float       // Amount of rawMaterial needed (in deductUnit)
+}
+
+// 4. Halls & Tables
+model Hall {
+  id     String  @id @default(uuid())
+  name   String  @unique
+  tables Table[]
+}
+
+model Table {
+  id       String  @id @default(uuid())
+  name     String  // e.g., "Table 1"
+  hallId   String
+  hall     Hall    @relation(fields: [hallId], references: [id])
+  status   String  @default("VACANT") // "VACANT" | "OCCUPIED" | "BILLING"
+  orders   SalesOrder[]
+}
+
+// 5. Shift Management
+model Shift {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  openedAt      DateTime  @default(now())
+  closedAt      DateTime?
+  
+  floatCash     Float     @default(0.0) // Opening cash
+  closedCash    Float?    // Closing actual cash
+  closedInstaPay Float?   // Closing actual InstaPay
+  closedVisa    Float?    // Closing actual Visa
+  
+  expectedCash  Float     @default(0.0)
+  expectedInstaPay Float  @default(0.0)
+  expectedVisa  Float     @default(0.0)
+  
+  varianceCash  Float     @default(0.0)
+  varianceInstaPay Float  @default(0.0)
+  varianceVisa  Float     @default(0.0)
+  
+  orders        SalesOrder[]
+  transactions  CashTransaction[]
+}
+
+model CashTransaction {
+  id          String   @id @default(uuid())
+  shiftId     String
+  shift       Shift    @relation(fields: [shiftId], references: [id])
+  type        String   // "PAYOUT" | "PAYIN"
+  amount      Float
+  reason      String   // Reason/Tag (e.g. "Purchased Lemons", "Cleaning supplies")
+  createdAt   DateTime @default(now())
+}
+
+// 6. Sales Orders
+model SalesOrder {
+  id            String   @id @default(uuid())
+  shiftId       String
+  shift         Shift    @relation(fields: [shiftId], references: [id])
+  tableId       String?
+  table         Table?   @relation(fields: [tableId], references: [id])
+  orderType     String   // "DINE_IN" | "TAKEAWAY"
+  paymentMethod String   // "CASH" | "INSTAPAY" | "VISA"
+  status        String   // "COMPLETED" | "CANCELLED"
+  
+  subtotal      Float
+  discount      Float    @default(0.0)
+  tax           Float    @default(0.0)
+  total         Float
+  
+  createdAt     DateTime @default(now())
+  items         SalesOrderItem[]
+}
+
+model SalesOrderItem {
+  id           String   @id @default(uuid())
+  orderId      String
+  order        SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId       String
+  item         Item     @relation(fields: [itemId], references: [id])
+  qty          Int
+  unitPrice    Float
+  totalPrice   Float
+  
+  modifiers    SalesOrderItemModifier[]
+}
+
+model SalesOrderItemModifier {
+  id               String   @id @default(uuid())
+  orderItemId      String
+  orderItem        SalesOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  modifierId       String
+  modifier         Modifier @relation(fields: [modifierId], references: [id])
+  unitPriceImpact  Float
+}
+
+// 7. Inventory Audit & User Logs
+model WastageLog {
+  id            String      @id @default(uuid())
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  quantity      Float       // in deductUnit
+  reason        String      // e.g., "Spillage", "Spoiled"
+  createdAt     DateTime    @default(now())
+}
+
+model UserLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String   // Description of action (e.g., "Deleted SalesOrder item")
+  createdAt DateTime @default(now())
+}
