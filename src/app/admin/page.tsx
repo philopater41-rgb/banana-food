@@ -6,7 +6,7 @@ import { useAppStore } from '@/lib/store';
 import { 
   TrendingUp, Package, AlertTriangle, Users, LogOut, 
   Trash2, DollarSign, CheckCircle2, RefreshCw, 
-  ChevronRight, Calendar, PlusCircle, ShoppingBag, X
+  ChevronRight, Calendar, PlusCircle, ShoppingBag, X, Menu
 } from 'lucide-react';
 
 interface KPIState {
@@ -58,6 +58,7 @@ interface WastageLog {
 
 interface RecentOrder {
   id: string;
+  receiptNumber?: string | null;
   orderType: string;
   paymentMethod: string;
   status: string;
@@ -71,7 +72,8 @@ export default function AdminPage() {
   const { user, logout } = useAppStore();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'wastage'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'wastage' | 'recipes'>('dashboard');
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
 
   // API Data States
   const [kpis, setKpis] = useState<KPIState>({
@@ -91,6 +93,22 @@ export default function AdminPage() {
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [wastageLogs, setWastageLogs] = useState<WastageLog[]>([]);
   
+  // Recipes tab states
+  const [recipesItems, setRecipesItems] = useState<any[]>([]);
+  const [recipesModifiers, setRecipesModifiers] = useState<any[]>([]);
+  const [selectedRecipeTarget, setSelectedRecipeTarget] = useState<{ type: 'item' | 'modifier'; id: string; name: string } | null>(null);
+  const [recipeIngredients, setRecipeIngredients] = useState<Array<{ rawMaterialId: string; quantity: number }>>([]);
+  const [loadingRecipes, setLoadingRecipes] = useState(false);
+  const [showAddMaterial, setShowAddMaterial] = useState(false);
+
+  // New Material inputs
+  const [newMatName, setNewMatName] = useState('');
+  const [newMatStock, setNewMatStock] = useState('');
+  const [newMatMinStock, setNewMatMinStock] = useState('');
+  const [newMatPurchaseUnit, setNewMatPurchaseUnit] = useState('');
+  const [newMatDeductUnit, setNewMatDeductUnit] = useState('');
+  const [newMatConvFactor, setNewMatConvFactor] = useState('');
+
   // Loading states
   const [loadingAnalytics, setLoadingAnalytics] = useState(true);
   const [loadingInventory, setLoadingInventory] = useState(false);
@@ -176,6 +194,24 @@ export default function AdminPage() {
     }
   }, []);
 
+  // Fetch Recipes
+  const fetchRecipes = useCallback(async () => {
+    setLoadingRecipes(true);
+    try {
+      const res = await fetch('/api/recipes');
+      if (res.ok) {
+        const data = await res.json();
+        setRecipesItems(data.items);
+        setRecipesModifiers(data.modifiers);
+      }
+    } catch (e) {
+      console.error(e);
+      triggerAlert('error', 'فشل تحميل الوصفات ومقادير الأصناف.');
+    } finally {
+      setLoadingRecipes(false);
+    }
+  }, []);
+
   // Trigger loading based on selected tab
   useEffect(() => {
     if (activeTab === 'dashboard') {
@@ -184,8 +220,11 @@ export default function AdminPage() {
       fetchInventory();
     } else if (activeTab === 'wastage') {
       fetchWastage();
+    } else if (activeTab === 'recipes') {
+      fetchRecipes();
+      fetchInventory();
     }
-  }, [activeTab, fetchAnalytics, fetchInventory, fetchWastage]);
+  }, [activeTab, fetchAnalytics, fetchInventory, fetchWastage, fetchRecipes]);
 
   // Handle Restock Form POST
   const handleRestockSubmit = async (e: React.FormEvent) => {
@@ -249,6 +288,110 @@ export default function AdminPage() {
     }
   };
 
+  // Handle Add New Raw Material
+  const handleAddMaterialSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMatName || !newMatPurchaseUnit || !newMatDeductUnit || !newMatConvFactor) return;
+    setSubmitLoading(true);
+
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newMatName,
+          stockQty: parseFloat(newMatStock) || 0.0,
+          minStockLevel: parseFloat(newMatMinStock) || 0.0,
+          purchaseUnit: newMatPurchaseUnit,
+          deductUnit: newMatDeductUnit,
+          conversionFactor: parseFloat(newMatConvFactor) || 1.0,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشلت إضافة الخامة');
+
+      triggerAlert('success', 'تم إضافة الخامة الجديدة بنجاح للمخزن.');
+      setShowAddMaterial(false);
+      setNewMatName('');
+      setNewMatStock('');
+      setNewMatMinStock('');
+      setNewMatPurchaseUnit('');
+      setNewMatDeductUnit('');
+      setNewMatConvFactor('');
+      fetchInventory();
+    } catch (err: any) {
+      triggerAlert('error', err.message || 'خطأ في إضافة الخامة');
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
+
+  // Handle Save Recipe
+  const handleSaveRecipeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRecipeTarget) return;
+    setSubmitLoading(true);
+
+    try {
+      const isItem = selectedRecipeTarget.type === 'item';
+      const body = {
+        itemId: isItem ? selectedRecipeTarget.id : undefined,
+        modifierId: !isItem ? selectedRecipeTarget.id : undefined,
+        ingredients: recipeIngredients.filter(ing => ing.rawMaterialId && ing.quantity > 0),
+      };
+
+      const res = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) throw new Error('فشل حفظ تفاصيل الوصفة');
+
+      triggerAlert('success', 'تم حفظ وتحديث مقادير الوصفة بنجاح.');
+      setSelectedRecipeTarget(null);
+      fetchRecipes();
+    } catch (err: any) {
+      triggerAlert('error', err.message || 'خطأ في حفظ الوصفة');
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
+
+  // Add ingredient row to builder
+  const addRecipeRow = () => {
+    setRecipeIngredients(prev => [...prev, { rawMaterialId: '', quantity: 0 }]);
+  };
+
+  // Remove ingredient row from builder
+  const removeRecipeRow = (idx: number) => {
+    setRecipeIngredients(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  // Update ingredient row in builder
+  const updateRecipeRow = (idx: number, field: 'rawMaterialId' | 'quantity', value: any) => {
+    setRecipeIngredients(prev => prev.map((ing, i) => {
+      if (i === idx) {
+        return {
+          ...ing,
+          [field]: field === 'quantity' ? parseFloat(value) || 0 : value,
+        };
+      }
+      return ing;
+    }));
+  };
+
+  // Open recipe builder
+  const startEditRecipe = (target: { type: 'item' | 'modifier'; id: string; name: string; recipe: any[] }) => {
+    setSelectedRecipeTarget(target);
+    const existing = target.recipe.map(ing => ({
+      rawMaterialId: ing.rawMaterialId,
+      quantity: ing.quantity,
+    }));
+    setRecipeIngredients(existing.length > 0 ? existing : [{ rawMaterialId: '', quantity: 0 }]);
+  };
+
   // SVG Chart Computations
   const maxItemTotal = topItems.reduce((max, i) => Math.max(max, i.total), 0) || 1;
   const totalPaymentSum = (payments.cash + payments.instapay + payments.visa) || 1;
@@ -257,10 +400,123 @@ export default function AdminPage() {
   const visaPct = Math.round((payments.visa / totalPaymentSum) * 100);
 
   return (
-    <div className="flex h-screen bg-[#090d16] text-gray-200 overflow-hidden text-right" dir="rtl">
+    <div className="flex flex-col md:flex-row h-screen bg-[#090d16] text-gray-200 overflow-hidden text-right" dir="rtl">
       
-      {/* 1. Left Navigation Sidebar */}
-      <aside className="w-64 bg-[#0c1424] border-l border-white/5 flex flex-col justify-between p-6 shrink-0">
+      {/* Mobile Top Header (only visible on mobile/tablet screens < md) */}
+      <header className="md:hidden h-14 bg-[#0c1424] border-b border-white/5 px-4 flex items-center justify-between shrink-0 no-print">
+        <button 
+          onClick={() => setShowMobileSidebar(true)}
+          className="p-1.5 rounded-lg bg-white/5 text-gray-400 hover:text-white"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <h1 className="text-sm font-bold text-white leading-tight">داي أند نايت (الإدارة)</h1>
+        </div>
+      </header>
+
+      {/* Mobile Drawer Sidebar Overlay */}
+      {showMobileSidebar && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm md:hidden flex justify-end no-print">
+          <aside className="w-64 bg-[#0c1424] h-full p-6 flex flex-col justify-between border-r border-white/5 animate-slide-left text-right" dir="rtl">
+            <div className="space-y-8">
+              <div className="flex items-center justify-between flex-row-reverse">
+                <button 
+                  onClick={() => setShowMobileSidebar(false)}
+                  className="p-1.5 rounded-lg bg-white/5 text-gray-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center font-bold text-white text-xs">
+                    DN
+                  </div>
+                  <span className="text-xs font-bold text-white">لوحة الإدارة</span>
+                </div>
+              </div>
+
+              {/* Mobile Navigation links */}
+              <nav className="space-y-1.5">
+                <button
+                  onClick={() => { setActiveTab('dashboard'); setShowMobileSidebar(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                    activeTab === 'dashboard'
+                      ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <TrendingUp className="w-4 h-4 shrink-0" />
+                  <span className="w-full text-right">تحليلات المبيعات والأرباح</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('inventory'); setShowMobileSidebar(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                    activeTab === 'inventory'
+                      ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <Package className="w-4 h-4 shrink-0" />
+                  <span className="w-full text-right">مخزن الخامات والمواد</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('wastage'); setShowMobileSidebar(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                    activeTab === 'wastage'
+                      ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <Trash2 className="w-4 h-4 shrink-0" />
+                  <span className="w-full text-right">هوالك وتوالف المخزن</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('recipes'); setShowMobileSidebar(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                    activeTab === 'recipes'
+                      ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <RefreshCw className="w-4 h-4 shrink-0" />
+                  <span className="w-full text-right">وصفات الأصناف</span>
+                </button>
+              </nav>
+            </div>
+
+            {/* Mobile Sidebar Footer */}
+            <div className="space-y-4 pt-4 border-t border-white/5">
+              <button 
+                onClick={() => router.push('/pos')}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20 text-xs font-bold transition-all"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>فتح شاشة البيع والكاشير</span>
+              </button>
+
+              <div className="flex items-center justify-between flex-row-reverse">
+                <div className="text-right">
+                  <p className="text-white font-semibold leading-tight text-xs">{user?.name}</p>
+                  <p className="text-gray-500 text-[9px] uppercase tracking-wider">مدير النظام</p>
+                </div>
+                <button 
+                  onClick={() => { logout(); router.push('/'); }}
+                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5 transition-all"
+                  title="تسجيل خروج"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* 1. Left Navigation Sidebar (Hidden on mobile) */}
+      <aside className="hidden md:flex w-64 bg-[#0c1424] border-l border-white/5 flex-col justify-between p-6 shrink-0">
         <div className="space-y-8">
           {/* Brand header */}
           <div className="flex items-center gap-3 justify-start flex-row-reverse">
@@ -310,6 +566,18 @@ export default function AdminPage() {
               <Trash2 className="w-4 h-4 shrink-0" />
               <span className="w-full text-right">هوالك وتوالف المخزن</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('recipes')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                activeTab === 'recipes'
+                  ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                  : 'text-gray-400 hover:bg-white/5 hover:text-white'
+              }`}
+            >
+              <RefreshCw className="w-4 h-4 shrink-0" />
+              <span className="w-full text-right">وصفات الأصناف (BOM)</span>
+            </button>
           </nav>
         </div>
 
@@ -340,26 +608,26 @@ export default function AdminPage() {
       </aside>
 
       {/* 2. Main Content Workspace */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-y-auto md:overflow-hidden">
         
         {/* Top Header Banner */}
-        <header className="h-16 border-b border-white/5 px-8 flex items-center justify-between shrink-0 bg-[#090d16]">
-          <div className="flex items-center gap-2 flex-row-reverse">
+        <header className="h-16 border-b border-white/5 px-4 md:px-8 flex items-center justify-between shrink-0 bg-[#090d16] flex-row-reverse">
+          <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-gray-500" />
-            <span className="text-xs text-gray-400 font-medium">
+            <span className="text-[10px] sm:text-xs text-gray-400 font-medium">
               تاريخ اليوم: {new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </span>
           </div>
 
           {/* Active status widget */}
-          <div className="text-xs text-right">
-            <span className="text-gray-400">الوردية شغالة حالياً مع: </span>
+          <div className="text-[10px] sm:text-xs text-right">
+            <span className="text-gray-400 hidden sm:inline">الوردية شغالة حالياً مع: </span>
             <span className="font-bold text-purple-400">{kpis.activeShiftUser}</span>
           </div>
         </header>
 
         {/* Tab content viewports */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
           
           {/* TAB 1: EXECUTIVE ANALYTICS DASHBOARD */}
           {activeTab === 'dashboard' && (
@@ -389,7 +657,7 @@ export default function AdminPage() {
 
                     <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
                       <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
-                      <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">صافي الربح التقديري اليوم</span>
+                      <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">ربح تقديري اليوم</span>
                       <p className="text-3xl font-black text-emerald-400 mt-2 text-right">EGP {kpis.estNetProfit.toFixed(2)}</p>
                       <span className="text-[10px] text-emerald-400 mt-2 block text-right">حساب الربح التقديري بمتوسط هامش 65%</span>
                     </div>
@@ -524,7 +792,7 @@ export default function AdminPage() {
                             {recentOrders.length > 0 ? (
                               recentOrders.map((ord) => (
                                 <tr key={ord.id} className="border-b border-white/5 text-gray-300">
-                                  <td className="py-3 font-mono text-cyan-400">{ord.id.slice(0, 8)}</td>
+                                  <td className="py-3 font-mono text-cyan-400">{ord.receiptNumber || ord.id.slice(0, 8)}</td>
                                   <td className="py-3">{new Date(ord.createdAt).toLocaleTimeString()}</td>
                                   <td className="py-3">
                                     <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
@@ -561,6 +829,14 @@ export default function AdminPage() {
                   <p className="text-xs text-gray-400 mt-1">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة أو الهوالك.</p>
                 </div>
                 <div className="flex gap-3 flex-row-reverse">
+                  <button 
+                    onClick={() => setShowAddMaterial(true)}
+                    className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                  >
+                    <PlusCircle className="w-4 h-4 shrink-0" />
+                    <span>إضافة مادة خام جديدة</span>
+                  </button>
+
                   <button 
                     onClick={() => { setSelectedMaterialId(materials[0]?.id || ''); setShowWastage(true); }}
                     className="px-4 py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/20 text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
@@ -628,51 +904,176 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* TAB 3: WASTE LOGS VIEW */}
-          {activeTab === 'wastage' && (
+          {/* TAB 4: RECIPES MANAGEMENT (BOM) */}
+          {activeTab === 'recipes' && (
             <div className="space-y-6">
               <div className="text-right">
-                <h2 className="text-xl font-bold text-white">سجل الهوالك والتوالف</h2>
-                <p className="text-xs text-gray-400 mt-1">متابعة المواد المفقودة وتالف تشغيل المطعم والمطبخ لحساب الفروقات بدقة.</p>
+                <h2 className="text-xl font-bold text-white">إدارة وصفات ومكونات الأصناف (BOM)</h2>
+                <p className="text-xs text-gray-400 mt-1">حدد المكونات والخامات التي يستهلكها كل صنف أو إضافة ليتم خصمها تلقائياً من المخزن فور البيع.</p>
               </div>
 
-              {loadingWastage ? (
+              {loadingRecipes ? (
                 <div className="h-96 flex items-center justify-center gap-2 text-sm text-gray-400">
                   <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
-                  <span>جاري تحميل سجل الهوالك...</span>
+                  <span>جاري تحميل قائمة الوصفات والمنتجات...</span>
+                </div>
+              ) : selectedRecipeTarget ? (
+                // --- RECIPE BUILDER WORKSPACE ---
+                <div className="glass-panel rounded-2xl p-6 space-y-6">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-4 flex-row-reverse">
+                    <div className="text-right">
+                      <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 rounded text-[10px] font-bold">
+                        {selectedRecipeTarget.type === 'item' ? 'صنف منيو' : 'إضافة للطلب'}
+                      </span>
+                      <h3 className="text-lg font-bold text-white mt-1">تعديل مقادير الوصفة لـ: {selectedRecipeTarget.name}</h3>
+                    </div>
+                    <button
+                      onClick={() => setSelectedRecipeTarget(null)}
+                      className="px-3 py-1.5 rounded-xl border border-white/10 hover:bg-white/5 text-gray-300 text-xs font-semibold"
+                    >
+                      إلغاء والرجوع للقائمة
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveRecipeSubmit} className="space-y-5">
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-12 gap-4 text-xs text-gray-400 font-bold px-2 flex-row-reverse text-right">
+                        <div className="col-span-6">اسم المادة الخام من المخزن</div>
+                        <div className="col-span-4">الكمية المستهلكة (بوحدة الاستهلاك الصغرى)</div>
+                        <div className="col-span-2 text-left">حذف</div>
+                      </div>
+
+                      {recipeIngredients.map((ing, idx) => (
+                        <div key={idx} className="grid grid-cols-12 gap-4 items-center">
+                          <div className="col-span-6">
+                            <select
+                              required
+                              value={ing.rawMaterialId}
+                              onChange={(e) => updateRecipeRow(idx, 'rawMaterialId', e.target.value)}
+                              className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500"
+                            >
+                              <option value="">اختار المادة الخام...</option>
+                              {materials.map((m) => (
+                                <option key={m.id} value={m.id}>{m.name} ({m.deductUnit})</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="col-span-4 relative">
+                            <input
+                              type="number"
+                              required
+                              value={ing.quantity || ''}
+                              onChange={(e) => updateRecipeRow(idx, 'quantity', e.target.value)}
+                              className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 pl-12 pr-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                              placeholder="0.00"
+                              min="0"
+                              step="any"
+                            />
+                            <span className="absolute left-3 top-2 text-[10px] text-gray-500">
+                              {materials.find(m => m.id === ing.rawMaterialId)?.deductUnit || ''}
+                            </span>
+                          </div>
+                          <div className="col-span-2 text-left">
+                            <button
+                              type="button"
+                              onClick={() => removeRecipeRow(idx)}
+                              className="p-2 text-rose-500 hover:text-rose-400 rounded-lg hover:bg-rose-500/10 transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-4 pt-4 border-t border-white/5 justify-between">
+                      <button
+                        type="button"
+                        onClick={addRecipeRow}
+                        className="px-3.5 py-2 border border-dashed border-white/10 hover:border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        <span>إضافة مادة خام للوصفة</span>
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={submitLoading}
+                        className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl text-xs shadow-lg shadow-cyan-500/10"
+                      >
+                        {submitLoading ? 'جاري الحفظ...' : 'حفظ وتثبيت الوصفة'}
+                      </button>
+                    </div>
+                  </form>
                 </div>
               ) : (
-                <div className="glass-panel rounded-2xl overflow-hidden">
-                  <table className="w-full text-right text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400">
-                        <th className="p-4">التاريخ والوقت</th>
-                        <th className="p-4">الخامة المفقودة</th>
-                        <th className="p-4">الكمية التالفة</th>
-                        <th className="p-4">السبب / البيان</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {wastageLogs.length > 0 ? (
-                        wastageLogs.map((log) => (
-                          <tr key={log.id} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
-                            <td className="p-4 text-gray-400">{new Date(log.createdAt).toLocaleString()}</td>
-                            <td className="p-4 font-semibold text-white">{log.rawMaterial.name}</td>
-                            <td className="p-4 font-mono text-rose-400 font-bold">-{log.quantity} {log.rawMaterial.deductUnit}</td>
-                            <td className="p-4 text-gray-400">
-                              <span className="px-2 py-0.5 bg-slate-800 text-gray-300 rounded font-semibold text-[10px]">
-                                {log.reason}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={4} className="p-8 text-center text-gray-500 italic">مفيش بيانات هالك مسجلة في الوقت الحالي.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                // --- RECIPES LIST VIEWER ---
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Items Recipes */}
+                  <div className="glass-panel rounded-2xl p-6 space-y-4">
+                    <h3 className="font-bold text-sm text-white text-right pb-2 border-b border-white/5">وصفات أصناف المنيو</h3>
+                    <div className="space-y-2.5 max-h-[500px] overflow-y-auto pl-1">
+                      {recipesItems.map((item) => (
+                        <div key={item.id} className="p-3.5 bg-slate-900/50 border border-white/5 rounded-xl flex items-center justify-between gap-4 text-xs flex-row-reverse">
+                          <div className="text-right">
+                            <h4 className="font-bold text-white text-sm">{item.name}</h4>
+                            <p className="text-gray-500 mt-1">
+                              {item.recipe.length > 0 ? (
+                                <span className="flex flex-wrap gap-1 mt-0.5 justify-start">
+                                  {item.recipe.map((ing: any, i: number) => (
+                                    <span key={i} className="px-1.5 py-0.5 bg-white/5 rounded border border-white/5 text-[10px] text-gray-300">
+                                      {ing.rawMaterial.name} ({ing.quantity}{ing.rawMaterial.deductUnit})
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-amber-500">لا توجد وصفة (لن يخصم من المخزن)</span>
+                              )}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
+                            className="px-2.5 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded-lg font-semibold transition-all shrink-0"
+                          >
+                            تعديل الوصفة
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Modifiers Recipes */}
+                  <div className="glass-panel rounded-2xl p-6 space-y-4">
+                    <h3 className="font-bold text-sm text-white text-right pb-2 border-b border-white/5">وصفات الإضافات (Modifiers)</h3>
+                    <div className="space-y-2.5 max-h-[500px] overflow-y-auto pl-1">
+                      {recipesModifiers.map((mod) => (
+                        <div key={mod.id} className="p-3.5 bg-slate-900/50 border border-white/5 rounded-xl flex items-center justify-between gap-4 text-xs flex-row-reverse">
+                          <div className="text-right">
+                            <h4 className="font-bold text-white text-sm">{mod.name}</h4>
+                            <p className="text-gray-500 mt-1">
+                              {mod.recipe.length > 0 ? (
+                                <span className="flex flex-wrap gap-1 mt-0.5 justify-start">
+                                  {mod.recipe.map((ing: any, i: number) => (
+                                    <span key={i} className="px-1.5 py-0.5 bg-white/5 rounded border border-white/5 text-[10px] text-gray-300">
+                                      {ing.rawMaterial.name} ({ing.quantity}{ing.rawMaterial.deductUnit})
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-amber-500">لا توجد وصفة للإضافة</span>
+                              )}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => startEditRecipe({ type: 'modifier', id: mod.id, name: mod.name, recipe: mod.recipe })}
+                            className="px-2.5 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 rounded-lg font-semibold transition-all shrink-0"
+                          >
+                            تعديل الوصفة
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -813,6 +1214,108 @@ export default function AdminPage() {
                 className="w-full py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-xl shadow-lg transition-all mt-2"
               >
                 {submitLoading ? 'جاري تسجيل الحركة...' : 'تأكيد تسجيل الهدر'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ADD NEW RAW MATERIAL MODAL */}
+      {showAddMaterial && (
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+            <button 
+              onClick={() => setShowAddMaterial(false)}
+              className="absolute top-4 left-4 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-xl font-bold text-white mb-2">إضافة مادة خام جديدة للمخزن</h3>
+            <p className="text-xs text-gray-400 mb-6">سجل تفاصيل المادة الخام الجديدة، رصيد الافتتاح، ووحدات القياس.</p>
+            
+            <form onSubmit={handleAddMaterialSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1.5">اسم المادة الخام</label>
+                <input
+                  type="text"
+                  required
+                  value={newMatName}
+                  onChange={(e) => setNewMatName(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                  placeholder="مثال: حليب كامل الدسم المراعي"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 mb-1.5">الرصيد الافتتاحي</label>
+                  <input
+                    type="number"
+                    value={newMatStock}
+                    onChange={(e) => setNewMatStock(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                    placeholder="0.00"
+                    min="0"
+                    step="any"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 mb-1.5">حد التنبيه للنفاد</label>
+                  <input
+                    type="number"
+                    value={newMatMinStock}
+                    onChange={(e) => setNewMatMinStock(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                    placeholder="مثال: 10"
+                    min="0"
+                    step="any"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الشراء (الكبرى)</label>
+                  <input
+                    type="text"
+                    required
+                    value={newMatPurchaseUnit}
+                    onChange={(e) => setNewMatPurchaseUnit(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                    placeholder="مثال: علبة"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الاستهلاك (الصغرى)</label>
+                  <input
+                    type="text"
+                    required
+                    value={newMatDeductUnit}
+                    onChange={(e) => setNewMatDeductUnit(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                    placeholder="مثال: مل"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">معامل التحويل (الكبيرة للصغيرة)</label>
+                  <input
+                    type="number"
+                    required
+                    value={newMatConvFactor}
+                    onChange={(e) => setNewMatConvFactor(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                    placeholder="مثال: 1000"
+                    min="1"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitLoading}
+                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold rounded-xl shadow-lg transition-all mt-3 text-xs"
+              >
+                {submitLoading ? 'جاري إضافة الخامة...' : 'إضافة المادة الخام وتأكيد الحفظ'}
               </button>
             </form>
           </div>

@@ -5,8 +5,13 @@ export async function GET() {
   try {
     // 1. Fetch categories with items
     const categories = await prisma.category.findMany({
+      where: {
+        isActive: true,
+        items: { some: { isActive: true } },
+      },
       include: {
         items: {
+          where: { isActive: true },
           orderBy: { name: 'asc' },
         },
       },

@@ -8,8 +8,11 @@ import { offlineDB, type LocalCategory, type LocalItem, type LocalModifier, type
 import { 
   Coffee, LogOut, Wifi, WifiOff, Users, ShoppingBag, 
   Trash2, Plus, Minus, DollarSign, CreditCard, RefreshCw, 
-  CheckCircle2, AlertCircle, X, PlusCircle, Printer
+  CheckCircle2, AlertCircle, X, PlusCircle, Printer, Menu, Package, Lock
 } from 'lucide-react';
+
+type PaymentMethod = 'CASH' | 'INSTAPAY' | 'VISA';
+
 // Use native browser crypto - NOT the Node.js polyfill
 const generateUUID = (): string => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -21,6 +24,19 @@ const generateUUID = (): string => {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+};
+
+const generateReceiptNumber = (): string => {
+  const now = new Date();
+  const dateKey = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('');
+  const counterKey = `dn_receipt_counter_${dateKey}`;
+  const nextNumber = Number.parseInt(localStorage.getItem(counterKey) || '0', 10) + 1;
+  localStorage.setItem(counterKey, String(nextNumber));
+  return `DN-${dateKey}-${String(nextNumber).padStart(4, '0')}`;
 };
 
 export default function POSPage() {
@@ -57,29 +73,49 @@ export default function POSPage() {
   const [floatCash, setFloatCash] = useState('0');
   const [closedCash, setClosedCash] = useState('');
   const [closedInstaPay, setClosedInstaPay] = useState('');
+  const [closedVisa, setClosedVisa] = useState('');
   
-  // Cashier Inventory Modal states
+  // Cashier Inventory & Recipes Modal states
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [inventoryMaterials, setInventoryMaterials] = useState<any[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
   const [selectedMatId, setSelectedMatId] = useState('');
-  const [inventoryAction, setInventoryAction] = useState<'view' | 'restock' | 'wastage'>('view');
+  const [inventoryAction, setInventoryAction] = useState<'view' | 'restock' | 'wastage' | 'addMaterial' | 'recipes'>('view');
   const [inventoryQty, setInventoryQty] = useState('');
   const [inventoryReason, setInventoryReason] = useState('');
   const [submitInventoryLoading, setSubmitInventoryLoading] = useState(false);
+
+  // Cashier recipe states
+  const [recipesItems, setRecipesItems] = useState<any[]>([]);
+  const [recipesModifiers, setRecipesModifiers] = useState<any[]>([]);
+  const [selectedRecipeTarget, setSelectedRecipeTarget] = useState<{ type: 'item' | 'modifier'; id: string; name: string } | null>(null);
+  const [recipeIngredients, setRecipeIngredients] = useState<Array<{ rawMaterialId: string; quantity: number }>>([]);
+  const [loadingRecipes, setLoadingRecipes] = useState(false);
+
+  // New Material inputs (Cashier)
+  const [newMatName, setNewMatName] = useState('');
+  const [newMatStock, setNewMatStock] = useState('');
+  const [newMatMinStock, setNewMatMinStock] = useState('');
+  const [newMatPurchaseUnit, setNewMatPurchaseUnit] = useState('');
+  const [newMatDeductUnit, setNewMatDeductUnit] = useState('');
+  const [newMatConvFactor, setNewMatConvFactor] = useState('');
   
   // Expense inputs
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseReason, setExpenseReason] = useState('');
   
   // POS Action inputs
-  const [discountVal, setDiscountVal] = useState('0');
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'INSTAPAY'>('CASH');
+  const [discountVal, setDiscountVal] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   
   // Receipt print state
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showPaymentConfirm, setShowPaymentConfirm] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState<LocalSalesOrder | null>(null);
   
+  // Mobile responsiveness tab
+  const [mobileTab, setMobileTab] = useState<'menu' | 'cart'>('menu');
+
   // Loading & Alert status
   const [loading, setLoading] = useState(true);
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -97,11 +133,24 @@ export default function POSPage() {
       return;
     }
     
-    // Check if shift is open, else force open shift dialog
-    if (!activeShift) {
-      setShowOpenShift(true);
-    }
+    // Removed force open shift dialog on mount to allow viewing
   }, [user, activeShift, router]);
+
+  // Guard check: active shift check
+  const ensureActiveShift = useCallback((): boolean => {
+    if (!activeShift) {
+      triggerAlert('error', 'يجب فتح وردية جديدة أولاً لبدء العمل والبيع.');
+      setShowOpenShift(true);
+      return false;
+    }
+    return true;
+  }, [activeShift]);
+
+  // Handle Table Selection
+  const handleTableSelect = (tableId: string | null) => {
+    if (!ensureActiveShift()) return;
+    setActiveTableId(tableId);
+  };
 
   // Alert helper
   const triggerAlert = (type: 'success' | 'error', text: string) => {
@@ -157,12 +206,24 @@ export default function POSPage() {
       const dbMods = await offlineDB.modifiers.toArray();
       const dbHalls = await offlineDB.halls.toArray();
       const dbTables = await offlineDB.diningTables.toArray();
+      const openTableIds = new Set(
+        (await offlineDB.carts.toArray())
+          .filter((localCart) => localCart.orderType === 'DINE_IN' && localCart.items.length > 0 && localCart.tableId)
+          .map((localCart) => localCart.tableId!)
+      );
+      const resolvedTables = dbTables.map((table) =>
+        openTableIds.has(table.id) ? { ...table, status: 'OCCUPIED' } : table
+      );
+
+      // A cart may have been created while offline. Keep its table visibly occupied
+      // after refreshing the server menu/table cache.
+      await offlineDB.diningTables.bulkPut(resolvedTables);
       
       setCategories(dbCats);
       setItems(dbItems);
       setModifiers(dbMods);
       setHalls(dbHalls);
-      setTables(dbTables);
+      setTables(resolvedTables);
       
       if (dbCats.length > 0 && !selectedCategoryId) {
         setSelectedCategoryId(dbCats[0].id);
@@ -202,7 +263,7 @@ export default function POSPage() {
         await offlineDB.carts.put(localCart);
       }
       setCart(localCart);
-      setDiscountVal(localCart.discount.toString());
+      setDiscountVal(localCart.discountRate && localCart.discountRate > 0 ? localCart.discountRate.toString() : '');
     } catch (e) {
       console.error('Error loading cart:', e);
     }
@@ -219,11 +280,12 @@ export default function POSPage() {
   }, [activeTableId, tables, loadCart]);
 
   // 4. Save Cart & Recalculate Totals
-  const saveAndRecalculateCart = async (updatedItems: LocalCartItem[], customDiscount: number | null = null) => {
+  const saveAndRecalculateCart = async (updatedItems: LocalCartItem[], customDiscountRate: number | null = null) => {
     if (!cart) return;
 
     const subtotal = updatedItems.reduce((acc, item) => acc + item.totalPrice, 0);
-    const disc = customDiscount !== null ? customDiscount : cart.discount;
+    const rate = customDiscountRate !== null ? customDiscountRate : (cart.discountRate || 0);
+    const disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
     const taxRate = 0.14; // 14% VAT standard
     const tax = Math.round((subtotal - disc) * taxRate * 100) / 100;
     const total = Math.max(0, subtotal - disc + tax);
@@ -233,6 +295,7 @@ export default function POSPage() {
       items: updatedItems,
       subtotal,
       discount: disc,
+      discountRate: rate,
       tax,
       total,
       updatedAt: Date.now(),
@@ -244,6 +307,7 @@ export default function POSPage() {
 
   // Add Item to Cart
   const handleItemClick = (item: LocalItem) => {
+    if (!ensureActiveShift()) return;
     const itemCategory = categories.find(c => c.id === item.categoryId);
     const hasMods = itemCategory && (itemCategory.name.includes('Coffee') || itemCategory.name.includes('Drinks') || itemCategory.name.includes('قهوة') || itemCategory.name.includes('مشروبات'));
     
@@ -358,15 +422,19 @@ export default function POSPage() {
       await offlineDB.diningTables.update(cart.tableId, { status: 'VACANT' });
       setTables(prev => prev.map(t => t.id === cart.tableId ? { ...t, status: 'VACANT' } : t));
     }
-    setDiscountVal('0');
+    setDiscountVal('');
   };
 
   // Apply discount
   const handleApplyDiscount = () => {
     if (!cart) return;
     const value = parseFloat(discountVal) || 0;
+    if (value < 0 || value > 100) {
+      triggerAlert('error', 'يجب أن تكون نسبة الخصم بين 0 و 100');
+      return;
+    }
     saveAndRecalculateCart(cart.items, value);
-    triggerAlert('success', `تم تطبيق خصم بقيمة EGP ${value}`);
+    triggerAlert('success', `تم تطبيق خصم بنسبة ${value}%`);
   };
 
   // 5. Place / Complete Order
@@ -387,6 +455,7 @@ export default function POSPage() {
 
       const newOrder: LocalSalesOrder = {
         id: orderId,
+        receiptNumber: generateReceiptNumber(),
         shiftId: activeShift.id,
         tableId: cart.tableId,
         orderType: cart.orderType,
@@ -534,6 +603,28 @@ export default function POSPage() {
     if (!activeShift) return;
 
     try {
+      const countPendingOrders = async () => {
+        const pendingOrders = await offlineDB.salesOrders
+          .where('syncStatus')
+          .equals('PENDING')
+          .toArray();
+        return pendingOrders.filter((order) => order.shiftId === activeShift.id).length;
+      };
+
+      let pendingOrdersCount = await countPendingOrders();
+      if (pendingOrdersCount > 0 && isOnline) {
+        await triggerSync();
+        pendingOrdersCount = await countPendingOrders();
+      }
+
+      if (pendingOrdersCount > 0) {
+        triggerAlert(
+          'error',
+          `لا يمكن إغلاق الوردية: يوجد ${pendingOrdersCount} فاتورة لم تتم مزامنتها بعد. اتصل بالإنترنت ثم أعد المحاولة.`
+        );
+        return;
+      }
+
       const res = await fetch('/api/shifts/close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -541,7 +632,7 @@ export default function POSPage() {
           shiftId: activeShift.id,
           closedCash: parseFloat(closedCash) || 0,
           closedInstaPay: parseFloat(closedInstaPay) || 0,
-          closedVisa: 0, // VISA option removed, default to 0
+          closedVisa: parseFloat(closedVisa) || 0,
         }),
       });
 
@@ -551,6 +642,9 @@ export default function POSPage() {
       triggerAlert('success', 'تم تقفيل اليومية بنجاح وتسجيل الفروقات.');
       setActiveShift(null);
       setShowCloseShift(false);
+      setClosedCash('');
+      setClosedInstaPay('');
+      setClosedVisa('');
       // Removed logout() to keep the cashier logged in
     } catch (err: any) {
       triggerAlert('error', err.message || 'خطأ أثناء تقفيل الشفت');
@@ -574,12 +668,136 @@ export default function POSPage() {
     }
   };
 
+  // Cashier Recipe Fetching
+  const fetchPOSRecipes = async () => {
+    setLoadingRecipes(true);
+    try {
+      const res = await fetch('/api/recipes');
+      if (res.ok) {
+        const data = await res.json();
+        setRecipesItems(data.items);
+        setRecipesModifiers(data.modifiers);
+      }
+    } catch (e) {
+      console.error(e);
+      triggerAlert('error', 'فشل تحميل الوصفات ومقادير الأصناف.');
+    } finally {
+      setLoadingRecipes(false);
+    }
+  };
+
   useEffect(() => {
     if (showInventoryModal) {
       fetchPOSInventory();
+      if (inventoryAction === 'recipes') {
+        fetchPOSRecipes();
+      }
+    }
+  }, [showInventoryModal, inventoryAction]);
+
+  useEffect(() => {
+    if (showInventoryModal) {
       setInventoryAction('view');
     }
   }, [showInventoryModal]);
+
+  const handlePOSAddMaterialSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMatName || !newMatPurchaseUnit || !newMatDeductUnit || !newMatConvFactor) return;
+    setSubmitInventoryLoading(true);
+
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newMatName,
+          stockQty: parseFloat(newMatStock) || 0.0,
+          minStockLevel: parseFloat(newMatMinStock) || 0.0,
+          purchaseUnit: newMatPurchaseUnit,
+          deductUnit: newMatDeductUnit,
+          conversionFactor: parseFloat(newMatConvFactor) || 1.0,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشلت إضافة الخامة');
+
+      triggerAlert('success', 'تم إضافة الخامة الجديدة بنجاح للمخزن.');
+      setInventoryAction('view');
+      setNewMatName('');
+      setNewMatStock('');
+      setNewMatMinStock('');
+      setNewMatPurchaseUnit('');
+      setNewMatDeductUnit('');
+      setNewMatConvFactor('');
+      fetchPOSInventory();
+    } catch (err: any) {
+      triggerAlert('error', err.message || 'خطأ في إضافة الخامة');
+    } finally {
+      setSubmitInventoryLoading(false);
+    }
+  };
+
+  const handlePOSSaveRecipeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRecipeTarget) return;
+    setSubmitInventoryLoading(true);
+
+    try {
+      const isItem = selectedRecipeTarget.type === 'item';
+      const body = {
+        itemId: isItem ? selectedRecipeTarget.id : undefined,
+        modifierId: !isItem ? selectedRecipeTarget.id : undefined,
+        ingredients: recipeIngredients.filter(ing => ing.rawMaterialId && ing.quantity > 0),
+      };
+
+      const res = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) throw new Error('فشل حفظ تفاصيل الوصفة');
+
+      triggerAlert('success', 'تم حفظ وتحديث مقادير الوصفة بنجاح.');
+      setSelectedRecipeTarget(null);
+      fetchPOSRecipes();
+    } catch (err: any) {
+      triggerAlert('error', err.message || 'خطأ في حفظ الوصفة');
+    } finally {
+      setSubmitInventoryLoading(false);
+    }
+  };
+
+  const addRecipeRow = () => {
+    setRecipeIngredients(prev => [...prev, { rawMaterialId: '', quantity: 0 }]);
+  };
+
+  const removeRecipeRow = (idx: number) => {
+    setRecipeIngredients(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateRecipeRow = (idx: number, field: 'rawMaterialId' | 'quantity', value: any) => {
+    setRecipeIngredients(prev => prev.map((ing, i) => {
+      if (i === idx) {
+        return {
+          ...ing,
+          [field]: field === 'quantity' ? parseFloat(value) || 0 : value,
+        };
+      }
+      return ing;
+    }));
+  };
+
+  const startEditRecipe = (target: { type: 'item' | 'modifier'; id: string; name: string; recipe: any[] }) => {
+    setSelectedRecipeTarget(target);
+    const existing = target.recipe.map(ing => ({
+      rawMaterialId: ing.rawMaterialId,
+      quantity: ing.quantity,
+    }));
+    setRecipeIngredients(existing.length > 0 ? existing : [{ rawMaterialId: '', quantity: 0 }]);
+  };
 
   const handlePOSRestockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -694,32 +912,32 @@ export default function POSPage() {
     <div className="flex flex-col h-screen bg-[#090d16] text-gray-200 text-right" dir="rtl">
       
       {/* 1. Header Navigation Bar */}
-      <header className="h-16 shrink-0 bg-[#0c1424] border-b border-white/5 px-6 flex items-center justify-between z-10 no-print">
+      <header className="h-16 shrink-0 bg-[#0c1424] border-b border-white/5 px-4 sm:px-6 flex items-center justify-between z-10 no-print">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-md shadow-cyan-500/10">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-md shadow-cyan-500/10 text-xs">
             DN
           </div>
-          <div className="text-right">
-            <h1 className="text-lg font-bold text-white leading-tight">داي أند نايت</h1>
-            <p className="text-xs text-gray-400">شاشة كاشير الصالة والتيك أواي</p>
+          <div className="hidden sm:block text-right">
+            <h1 className="text-sm font-bold text-white leading-tight">داي أند نايت</h1>
+            <p className="text-[10px] text-gray-400">شاشة كاشير الصالة والتيك أواي</p>
           </div>
         </div>
 
         {/* Sync Status, Shift controls and Logout */}
-        <div className="flex items-center gap-4 flex-row-reverse">
+        <div className="flex items-center gap-2 sm:gap-4 flex-row-reverse overflow-x-auto max-w-[70%] sm:max-w-none scrollbar-none py-1">
           {/* Online/Offline Badge */}
-          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+          <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-semibold shrink-0 ${
             isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
           }`}>
             {isOnline ? (
               <>
-                <Wifi className="w-3.5 h-3.5" />
-                <span>متصل بالشبكة</span>
+                <Wifi className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                <span className="hidden sm:inline">متصل بالشبكة</span>
               </>
             ) : (
               <>
-                <WifiOff className="w-3.5 h-3.5" />
-                <span>شغال محلي (أوفلاين)</span>
+                <WifiOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                <span className="hidden sm:inline">شغال محلي (أوفلاين)</span>
               </>
             )}
           </div>
@@ -729,15 +947,16 @@ export default function POSPage() {
             <button 
               onClick={triggerSync}
               disabled={syncing || !isOnline}
-              className="flex items-center gap-2 px-3 py-1 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 rounded-full text-xs font-semibold transition-all disabled:opacity-50"
+              className="flex items-center gap-1 px-2.5 py-1 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 rounded-full text-[10px] sm:text-xs font-semibold transition-all disabled:opacity-50 shrink-0"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              <span>{pendingCount} فواتير معلقة للمزامنة</span>
+              <RefreshCw className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{pendingCount} فواتير معلقة</span>
+              <span className="sm:hidden">{pendingCount} معلق</span>
             </button>
           )}
 
           {activeShift && (
-            <div className="text-xs text-left ml-2 hidden md:block">
+            <div className="text-[10px] sm:text-xs text-left ml-2 hidden md:block shrink-0">
               <p className="text-gray-400">نقدية الدرج المتوقعة</p>
               <p className="font-bold text-cyan-400">EGP {activeShift.expectedCash.toFixed(2)}</p>
             </div>
@@ -747,33 +966,48 @@ export default function POSPage() {
           {user?.role === 'ADMIN' && (
             <button 
               onClick={() => router.push('/admin')}
-              className="px-4 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-semibold border border-white/5 transition-all text-white"
+              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] sm:text-xs font-semibold border border-white/5 transition-all text-white shrink-0"
             >
-              شاشة الإدارة
+              <span className="hidden sm:inline">شاشة الإدارة</span>
+              <span className="sm:hidden">الإدارة</span>
             </button>
           )}
 
           {/* Action buttons */}
           <button 
             onClick={() => setShowInventoryModal(true)}
-            className="px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-xs font-semibold text-cyan-400 border border-cyan-500/20 transition-all"
+            className="px-2.5 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] sm:text-xs font-semibold text-cyan-400 border border-cyan-500/20 transition-all shrink-0 flex items-center gap-1"
           >
-            مخزن الخامات
+            <Package className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">مخزن الخامات</span>
           </button>
 
-          <button 
-            onClick={() => setShowExpenseModal(true)}
-            className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-xs font-semibold text-amber-400 border border-amber-500/20 transition-all"
-          >
-            تسجيل مصروف
-          </button>
+          {activeShift ? (
+            <>
+              <button 
+                onClick={() => setShowExpenseModal(true)}
+                className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-[10px] sm:text-xs font-semibold text-amber-400 border border-amber-500/20 transition-all shrink-0 flex items-center gap-1"
+              >
+                <DollarSign className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">تسجيل مصروف</span>
+              </button>
 
-          <button 
-            onClick={() => setShowCloseShift(true)}
-            className="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-xs font-semibold text-rose-400 border border-rose-500/20 transition-all"
-          >
-            تقفيل اليومية
-          </button>
+              <button 
+                onClick={() => setShowCloseShift(true)}
+                className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-[10px] sm:text-xs font-semibold text-rose-400 border border-rose-500/20 transition-all shrink-0 flex items-center gap-1"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">تقفيل اليومية</span>
+              </button>
+            </>
+          ) : (
+            <button 
+              onClick={() => setShowOpenShift(true)}
+              className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-xs font-bold text-white shadow-lg shadow-orange-500/10 transition-all animate-pulse"
+            >
+              فتح وردية جديدة
+            </button>
+          )}
 
           <button 
             onClick={() => { logout(); router.push('/'); }}
@@ -786,10 +1020,10 @@ export default function POSPage() {
       </header>
 
       {/* 2. Main POS Workspace Grid */}
-      <main className="flex-1 flex overflow-hidden no-print">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden no-print">
         
         {/* Left Side: Tables Floor Plan & Items Menu Grid */}
-        <section className="flex-1 flex flex-col p-4 overflow-hidden gap-4">
+        <section className={`flex-1 flex flex-col p-4 overflow-hidden gap-4 ${mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'}`}>
           
           {/* Interactive Floor Plan (Halls & Tables) */}
           <div className="glass-panel rounded-xl p-4 shrink-0 flex flex-col gap-3">
@@ -799,7 +1033,7 @@ export default function POSPage() {
                 <h2 className="font-semibold text-sm text-white">صالات وترابيزات الصالة</h2>
               </div>
               <button 
-                onClick={() => setActiveTableId(null)}
+                onClick={() => handleTableSelect(null)}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
                   !activeTableId 
                     ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' 
@@ -835,12 +1069,12 @@ export default function POSPage() {
                 .map((table) => (
                   <button
                     key={table.id}
-                    onClick={() => setActiveTableId(table.id)}
+                    onClick={() => handleTableSelect(table.id)}
                     className={`flex flex-col items-center justify-center p-2 rounded-lg text-xs font-medium border transition-all h-[55px] ${
                       activeTableId === table.id
                         ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-md shadow-cyan-500/5'
                         : table.status === 'OCCUPIED'
-                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
                         : 'bg-white/5 text-gray-300 border-white/5 hover:bg-white/10'
                     }`}
                   >
@@ -908,7 +1142,7 @@ export default function POSPage() {
         </section>
 
         {/* Right Side: Active Cart Invoice / Checkout Panel */}
-        <section className="w-[360px] md:w-[400px] bg-[#0c1424] border-r border-white/5 flex flex-col overflow-hidden">
+        <section className={`w-full lg:w-[380px] xl:w-[420px] bg-[#0c1424] lg:border-r border-white/5 flex flex-col overflow-hidden shrink-0 ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
           
           {/* Cart Header */}
           <div className="p-4 border-b border-white/5 flex items-center justify-between shrink-0 flex-row-reverse">
@@ -999,8 +1233,9 @@ export default function POSPage() {
                 value={discountVal}
                 onChange={(e) => setDiscountVal(e.target.value)}
                 className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
-                placeholder="قيمة الخصم بالجنيه"
+                placeholder="نسبة الخصم %"
                 min="0"
+                max="100"
               />
               <button 
                 onClick={handleApplyDiscount}
@@ -1019,7 +1254,7 @@ export default function POSPage() {
               </div>
               {cart && cart.discount > 0 && (
                 <div className="flex justify-between text-xs text-rose-400 flex-row-reverse">
-                  <span>الخصم المطبق</span>
+                  <span>الخصم المطبق ({cart.discountRate || 0}%)</span>
                   <span>-EGP {cart.discount.toFixed(2)}</span>
                 </div>
               )}
@@ -1038,7 +1273,7 @@ export default function POSPage() {
               <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 block text-right">
                 طريقة الدفع
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('CASH')}
@@ -1064,12 +1299,25 @@ export default function POSPage() {
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>إنستا باي</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('VISA')}
+                  className={`flex flex-col items-center gap-1 py-2 rounded-xl border text-xs font-semibold transition-all ${
+                    paymentMethod === 'VISA'
+                      ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm'
+                      : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>فيزا</span>
+                </button>
               </div>
             </div>
 
             {/* Complete checkout button */}
             <button
-              onClick={handleCompleteOrder}
+              onClick={() => setShowPaymentConfirm(true)}
               disabled={!cart || cart.items.length === 0}
               className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-600 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md shadow-cyan-500/10 active:scale-98 disabled:opacity-50 text-sm flex items-center justify-center gap-2 flex-row-reverse"
             >
@@ -1100,6 +1348,12 @@ export default function POSPage() {
       {showOpenShift && (
         <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
           <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+            <button 
+              onClick={() => setShowOpenShift(false)}
+              className="absolute top-4 left-4 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
             
             {checkingShift ? (
               <div className="flex flex-col items-center justify-center gap-3 py-8">
@@ -1192,10 +1446,14 @@ export default function POSPage() {
             <p className="text-xs text-gray-400 mb-6">اكتب المبالغ الفعلية اللي معاك في الدرج والإنستا باي لتسوية الوردية وحساب العجز أو الزيادة.</p>
             
             <form onSubmit={handleCloseShiftSubmit} className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
                   <span className="text-[10px] text-gray-400">الكاش المتوقع بالدرج</span>
                   <p className="text-sm font-bold text-cyan-400 mt-1">EGP {activeShift?.expectedCash.toFixed(2) || '0.00'}</p>
+                </div>
+                <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
+                  <span className="text-[10px] text-gray-400">المتوقع فيزا</span>
+                  <p className="text-sm font-bold text-blue-400 mt-1">EGP {activeShift?.expectedVisa.toFixed(2) || '0.00'}</p>
                 </div>
                 <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
                   <span className="text-[10px] text-gray-400">المتوقع إنستا باي</span>
@@ -1213,6 +1471,18 @@ export default function POSPage() {
                     onChange={(e) => setClosedCash(e.target.value)}
                     className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
                     placeholder="اكتب المبلغ الفعلي الكاش هنا"
+                    min="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي الفيزا الفعلي (EGP)</label>
+                  <input
+                    type="number"
+                    required
+                    value={closedVisa}
+                    onChange={(e) => setClosedVisa(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-blue-500 text-right"
+                    placeholder="اكتب إجمالي الفيزا هنا"
                     min="0"
                   />
                 </div>
@@ -1341,6 +1611,44 @@ export default function POSPage() {
         </div>
       )}
 
+      {/* PAYMENT CONFIRMATION DIALOG */}
+      {showPaymentConfirm && cart && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
+          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 text-right" dir="rtl">
+            <h3 className="text-lg font-bold text-white">تأكيد الدفع</h3>
+            <p className="text-xs text-gray-400 mt-2">راجع المبلغ وطريقة الدفع قبل تقفيل الفاتورة.</p>
+            <div className="my-5 p-4 rounded-xl bg-white/5 border border-white/10 space-y-2">
+              <div className="flex justify-between text-sm text-gray-300 flex-row-reverse">
+                <span>الإجمالي</span>
+                <span className="font-bold text-cyan-400">EGP {cart.total.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm text-gray-300 flex-row-reverse">
+                <span>طريقة الدفع</span>
+                <span className="font-bold text-white">
+                  {paymentMethod === 'CASH' ? 'كاش' : paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'فيزا'}
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setShowPaymentConfirm(false)}
+                className="py-3 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-sm"
+              >
+                رجوع وتعديل
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowPaymentConfirm(false); handleCompleteOrder(); }}
+                className="py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl text-sm"
+              >
+                تأكيد الدفع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RECEIPT PRINTING PREVIEW MODAL */}
       {showPrintModal && receiptOrder && (
         <div className="fixed inset-0 z-45 bg-black/85 flex items-center justify-center p-4 backdrop-blur-sm no-print">
@@ -1362,7 +1670,7 @@ export default function POSPage() {
               <div className="text-center font-bold text-xs uppercase tracking-wide border-b border-dashed border-gray-400 pb-2">
                 كافيه داي أند نايت (Day & Night)<br />
                 القاهرة، مصر<br />
-                رقم الفاتورة: {receiptOrder.id.slice(0, 8)}
+                رقم الفاتورة: {receiptOrder.receiptNumber}
               </div>
               <div className="my-2 border-b border-dashed border-gray-400 pb-2 space-y-0.5">
                 <p>تاريخ: {new Date(receiptOrder.createdAt).toLocaleDateString()}</p>
@@ -1453,7 +1761,7 @@ export default function POSPage() {
           <div className="text-center font-bold text-xs uppercase border-b border-dashed border-gray-500 pb-2">
             كافيه داي أند نايت (Day & Night)<br />
             القاهرة، مصر<br />
-            رقم الفاتورة: {receiptOrder.id.slice(0, 8)}
+            رقم الفاتورة: {receiptOrder.receiptNumber}
           </div>
           <div className="my-2 border-b border-dashed border-gray-500 pb-1">
             <p>تاريخ: {new Date(receiptOrder.createdAt).toLocaleDateString()}</p>
@@ -1527,11 +1835,45 @@ export default function POSPage() {
             >
               <X className="w-5 h-5" />
             </button>
+
+            {/* Tab navigation inside inventory modal */}
+            <div className="flex gap-2 border-b border-white/5 pb-4 mb-4 flex-row-reverse justify-start">
+              <button
+                onClick={() => setInventoryAction('view')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                  inventoryAction === 'view' || inventoryAction === 'restock' || inventoryAction === 'wastage'
+                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+                    : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
+                }`}
+              >
+                جرد ومخزن الخامات
+              </button>
+              <button
+                onClick={() => setInventoryAction('recipes')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                  inventoryAction === 'recipes'
+                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+                    : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
+                }`}
+              >
+                الوصفات ومقادير الأصناف
+              </button>
+              <button
+                onClick={() => setInventoryAction('addMaterial')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                  inventoryAction === 'addMaterial'
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
+                }`}
+              >
+                + إضافة خامة جديدة
+              </button>
+            </div>
             
             {inventoryAction === 'view' && (
               <>
-                <h3 className="text-xl font-bold text-white mb-2">مخزن وجرد الخامات</h3>
-                <p className="text-xs text-gray-400 mb-6">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة أو الهوالك.</p>
+                <h3 className="text-lg font-bold text-white mb-1">مخزن وجرد الخامات</h3>
+                <p className="text-[11px] text-gray-400 mb-4">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة أو الهوالك.</p>
                 
                 {loadingInventory ? (
                   <div className="flex items-center justify-center py-12 gap-2 text-sm text-gray-400">
@@ -1540,10 +1882,10 @@ export default function POSPage() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="overflow-x-auto rounded-xl border border-white/5">
+                    <div className="overflow-x-auto rounded-xl border border-white/5 max-h-[350px]">
                       <table className="w-full text-right text-xs border-collapse">
                         <thead>
-                          <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400">
+                          <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400 sticky top-0 z-10">
                             <th className="p-3">اسم المادة الخام</th>
                             <th className="p-3">الرصيد الحالي بالمخزن</th>
                             <th className="p-3">حد التنبيه للنفاد</th>
@@ -1564,11 +1906,11 @@ export default function POSPage() {
                               <td className="p-3 text-gray-400">{mat.minStockLevel} {mat.deductUnit}</td>
                               <td className="p-3">
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  mat.isLowStock 
+                                  mat.stockQty < mat.minStockLevel 
                                     ? 'bg-red-500/10 text-red-400 border border-red-500/15' 
                                     : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/15'
                                 }`}>
-                                  {mat.isLowStock ? 'ناقص / يحتاج توريد' : 'آمن'}
+                                  {mat.stockQty < mat.minStockLevel ? 'ناقص' : 'آمن'}
                                 </span>
                               </td>
                               <td className="p-3 text-left space-x-2 space-x-reverse">
@@ -1698,9 +2040,268 @@ export default function POSPage() {
                 </form>
               </>
             )}
+
+            {inventoryAction === 'addMaterial' && (
+              <>
+                <h3 className="text-xl font-bold text-white mb-2">إضافة مادة خام جديدة للمخزن</h3>
+                <p className="text-xs text-gray-400 mb-6">سجل تفاصيل المادة الخام الجديدة، رصيد الافتتاح، ووحدات القياس.</p>
+                
+                <form onSubmit={handlePOSAddMaterialSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 mb-1.5">اسم المادة الخام</label>
+                    <input
+                      type="text"
+                      required
+                      value={newMatName}
+                      onChange={(e) => setNewMatName(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                      placeholder="مثال: حليب كامل الدسم المراعي"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 mb-1.5">الرصيد الافتتاحي</label>
+                      <input
+                        type="number"
+                        value={newMatStock}
+                        onChange={(e) => setNewMatStock(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                        placeholder="0.00"
+                        min="0"
+                        step="any"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 mb-1.5">حد التنبيه للنفاد</label>
+                      <input
+                        type="number"
+                        value={newMatMinStock}
+                        onChange={(e) => setNewMatMinStock(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
+                        placeholder="مثال: 10"
+                        min="0"
+                        step="any"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الشراء (الكبرى)</label>
+                      <input
+                        type="text"
+                        required
+                        value={newMatPurchaseUnit}
+                        onChange={(e) => setNewMatPurchaseUnit(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                        placeholder="مثال: علبة"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الاستهلاك (الصغرى)</label>
+                      <input
+                        type="text"
+                        required
+                        value={newMatDeductUnit}
+                        onChange={(e) => setNewMatDeductUnit(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                        placeholder="مثال: مل"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">معامل التحويل</label>
+                      <input
+                        type="number"
+                        required
+                        value={newMatConvFactor}
+                        onChange={(e) => setNewMatConvFactor(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                        placeholder="مثال: 1000"
+                        min="1"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setInventoryAction('view')}
+                      className="px-4 py-2 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-xs"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submitInventoryLoading}
+                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold rounded-xl text-xs"
+                    >
+                      {submitInventoryLoading ? 'جاري الحفظ...' : 'تأكيد وحفظ'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
+
+            {inventoryAction === 'recipes' && (
+              <div className="space-y-4 text-right" dir="rtl">
+                <div className="text-right">
+                  <h3 className="text-lg font-bold text-white">إدارة وصفات المنتجات</h3>
+                  <p className="text-[11px] text-gray-400">حدد مكونات كل صنف أو إضافة لخصمها تلقائياً من مخزنك عند البيع.</p>
+                </div>
+
+                {loadingRecipes ? (
+                  <div className="flex items-center justify-center py-12 gap-2 text-sm text-gray-400">
+                    <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                    <span>جاري تحميل قائمة الوصفات...</span>
+                  </div>
+                ) : selectedRecipeTarget ? (
+                  // --- CASHER RECIPE EDITOR ---
+                  <div className="border border-white/5 rounded-xl p-4 bg-slate-900/40 space-y-4 text-right" dir="rtl">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2 flex-row-reverse">
+                      <h4 className="font-bold text-white text-xs font-sans">تعديل وصفة: {selectedRecipeTarget.name}</h4>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRecipeTarget(null)}
+                        className="text-[10px] text-cyan-400 hover:underline"
+                      >
+                        رجوع للوصفات
+                      </button>
+                    </div>
+
+                    <form onSubmit={handlePOSSaveRecipeSubmit} className="space-y-4">
+                      <div className="space-y-2">
+                        {recipeIngredients.map((ing, idx) => (
+                          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-6">
+                              <select
+                                required
+                                value={ing.rawMaterialId}
+                                onChange={(e) => updateRecipeRow(idx, 'rawMaterialId', e.target.value)}
+                                className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                              >
+                                <option value="">اختار المادة الخام...</option>
+                                {inventoryMaterials.map((m) => (
+                                  <option key={m.id} value={m.id}>{m.name} ({m.deductUnit})</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="col-span-4 relative">
+                              <input
+                                type="number"
+                                required
+                                value={ing.quantity || ''}
+                                onChange={(e) => updateRecipeRow(idx, 'quantity', e.target.value)}
+                                className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 pl-10 pr-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                                placeholder="0.00"
+                                min="0"
+                                step="any"
+                              />
+                              <span className="absolute left-2.5 top-1.5 text-[9px] text-gray-500 font-mono">
+                                {inventoryMaterials.find(m => m.id === ing.rawMaterialId)?.deductUnit || ''}
+                              </span>
+                            </div>
+                            <div className="col-span-2 text-left">
+                              <button
+                                type="button"
+                                onClick={() => removeRecipeRow(idx)}
+                                className="p-1 text-rose-500 hover:text-rose-400"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex justify-between pt-2">
+                        <button
+                          type="button"
+                          onClick={addRecipeRow}
+                          className="px-2 py-1 border border-dashed border-white/10 text-cyan-400 hover:bg-cyan-500/5 rounded-lg text-[10px] font-semibold"
+                        >
+                          + إضافة مادة خام للوصفة
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={submitInventoryLoading}
+                          className="px-4 py-1.5 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-lg text-[10px]"
+                        >
+                          {submitInventoryLoading ? 'جاري الحفظ...' : 'تثبيت الوصفة'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : (
+                  // --- CASHIER RECIPE LIST ---
+                  <div className="grid grid-cols-2 gap-4 max-h-[300px] overflow-y-auto">
+                    <div className="border border-white/5 rounded-xl p-3 bg-slate-900/20 text-right" dir="rtl">
+                      <h4 className="font-bold text-white text-[11px] pb-1 border-b border-white/5 mb-2">وصفات المنيو</h4>
+                      <div className="space-y-2">
+                        {recipesItems.map((item) => (
+                          <div key={item.id} className="flex justify-between items-center text-[10px] border-b border-white/5 pb-2 flex-row-reverse text-right">
+                            <span className="text-white font-semibold">{item.name}</span>
+                            <button
+                              onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
+                              className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 text-right font-sans"
+                            >
+                              تعديل
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="border border-white/5 rounded-xl p-3 bg-slate-900/20 text-right" dir="rtl">
+                      <h4 className="font-bold text-white text-[11px] pb-1 border-b border-white/5 mb-2">وصفات الإضافات</h4>
+                      <div className="space-y-2">
+                        {recipesModifiers.map((mod) => (
+                          <div key={mod.id} className="flex justify-between items-center text-[10px] border-b border-white/5 pb-2 flex-row-reverse text-right">
+                            <span className="text-white font-semibold">{mod.name}</span>
+                            <button
+                              onClick={() => startEditRecipe({ type: 'modifier', id: mod.id, name: mod.name, recipe: mod.recipe })}
+                              className="px-2 py-0.5 bg-purple-500/10 text-purple-300 border border-purple-500/20 rounded hover:bg-purple-500/20 text-right font-sans"
+                            >
+                              تعديل
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      {/* Mobile Bottom Navigation Bar (Visible only on mobile/tablet screens < lg) */}
+      <div className="lg:hidden shrink-0 h-14 bg-[#0c1424] border-t border-white/5 grid grid-cols-2 text-center no-print">
+        <button
+          onClick={() => setMobileTab('menu')}
+          className={`flex flex-col items-center justify-center gap-1 text-xs transition-all ${
+            mobileTab === 'menu' ? 'text-cyan-400 font-bold bg-cyan-500/5' : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>الصالات والمنيو</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('cart')}
+          className={`flex flex-col items-center justify-center gap-1 text-xs relative transition-all ${
+            mobileTab === 'cart' ? 'text-cyan-400 font-bold bg-cyan-500/5' : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          <ShoppingBag className="w-4 h-4" />
+          <span>الفاتورة الحالية</span>
+          {cart && cart.items.length > 0 && (
+            <span className="absolute top-2 right-1/2 translate-x-5 px-1.5 py-0.5 rounded-full bg-cyan-500 text-white text-[9px] font-bold">
+              {cart.items.reduce((acc, i) => acc + i.qty, 0)}
+            </span>
+          )}
+        </button>
+      </div>
 
     </div>
   );

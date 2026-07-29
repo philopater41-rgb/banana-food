@@ -17,6 +17,7 @@ interface SyncOrderItem {
 
 interface SyncOrder {
   id: string;
+  receiptNumber?: string;
   shiftId: string;
   tableId?: string | null;
   orderType: string; // "DINE_IN" | "TAKEAWAY"
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
           await tx.salesOrder.create({
             data: {
               id: order.id,
+              receiptNumber: order.receiptNumber,
               shiftId: order.shiftId,
               tableId: order.tableId || null,
               orderType: order.orderType,

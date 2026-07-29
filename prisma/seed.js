@@ -1,7 +1,14 @@
+require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
+const { PrismaNeon } = require('@prisma/adapter-neon');
+const { neonConfig } = require('@neondatabase/serverless');
+const ws = require('ws');
 const crypto = require('crypto');
 
-const prisma = new PrismaClient();
+neonConfig.webSocketConstructor = ws;
+
+const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
 
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');

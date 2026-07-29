@@ -62,6 +62,7 @@ export function useOfflineSync() {
       // Format orders to match the API expectation
       const ordersToSync = pendingOrders.map((order) => ({
         id: order.id,
+        receiptNumber: order.receiptNumber,
         shiftId: order.shiftId,
         tableId: order.tableId,
         orderType: order.orderType,

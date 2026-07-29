@@ -54,6 +54,7 @@ export interface LocalCart {
   items: LocalCartItem[];
   subtotal: number;
   discount: number;
+  discountRate?: number;
   tax: number;
   total: number;
   updatedAt: number;
@@ -61,6 +62,7 @@ export interface LocalCart {
 
 export interface LocalSalesOrder {
   id: string;
+  receiptNumber: string;
   shiftId: string;
   tableId: string | null;
   orderType: 'DINE_IN' | 'TAKEAWAY';
