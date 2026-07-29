@@ -11,6 +11,7 @@ export async function GET() {
     const todayOrders = await prisma.salesOrder.findMany({
       where: {
         status: 'COMPLETED',
+        paymentMethod: { not: 'STAFF' },
         createdAt: {
           gte: startOfToday,
         },
@@ -18,11 +19,16 @@ export async function GET() {
     });
 
     const todaySales = todayOrders.reduce((sum, order) => sum + order.total, 0);
+    const todayStaffOrders = await prisma.salesOrder.findMany({
+      where: { status: 'COMPLETED', paymentMethod: 'STAFF', createdAt: { gte: startOfToday } },
+    });
+    const todayStaffConsumption = todayStaffOrders.reduce((sum, order) => sum + order.total, 0);
 
     // 2. Calculate Monthly Sales
     const monthOrders = await prisma.salesOrder.findMany({
       where: {
         status: 'COMPLETED',
+        paymentMethod: { not: 'STAFF' },
         createdAt: {
           gte: startOfMonth,
         },
@@ -31,10 +37,7 @@ export async function GET() {
 
     const monthlySales = monthOrders.reduce((sum, order) => sum + order.total, 0);
 
-    // 3. Estimated Net Profit (let's assume gross margin is 65% for cafe)
-    const estNetProfit = todaySales * 0.65;
-
-    // 4. Active Shift Info
+    // 3. Active Shift Info
     const activeShift = await prisma.shift.findFirst({
       where: { closedAt: null },
       include: {
@@ -42,23 +45,22 @@ export async function GET() {
       },
     });
 
-    // 5. Payment Breakdown (Today)
+    // 4. Payment Breakdown (Today)
     let cash = 0;
     let instapay = 0;
-    let visa = 0;
 
     for (const order of todayOrders) {
       if (order.paymentMethod === 'CASH') cash += order.total;
       else if (order.paymentMethod === 'INSTAPAY') instapay += order.total;
-      else if (order.paymentMethod === 'VISA') visa += order.total;
     }
 
-    // 6. Top Selling Items (Today)
+    // 5. Top Selling Items (Today)
     // We group sales by Item using raw count.
     const orderItems = await prisma.salesOrderItem.findMany({
       where: {
         order: {
           status: 'COMPLETED',
+          paymentMethod: { not: 'STAFF' },
           createdAt: { gte: startOfToday },
         },
       },
@@ -84,8 +86,41 @@ export async function GET() {
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 5);
 
-    // 7. Low Stock Alerts
-    const rawMaterials = await prisma.rawMaterial.findMany({});
+    const summarizeTopItems = (orderItems: Array<{ itemId: string; qty: number; totalPrice: number; item: { name: string } }>) => {
+      const summary: { [key: string]: { name: string; qty: number; total: number } } = {};
+      for (const orderItem of orderItems) {
+        if (!summary[orderItem.itemId]) summary[orderItem.itemId] = { name: orderItem.item.name, qty: 0, total: 0 };
+        summary[orderItem.itemId].qty += orderItem.qty;
+        summary[orderItem.itemId].total += orderItem.totalPrice;
+      }
+      return Object.values(summary).sort((a, b) => b.qty - a.qty).slice(0, 5);
+    };
+    const [monthOrderItems, allOrderItems] = await Promise.all([
+      prisma.salesOrderItem.findMany({
+        where: { order: { status: 'COMPLETED', paymentMethod: { not: 'STAFF' }, createdAt: { gte: startOfMonth } } },
+        include: { item: true },
+      }),
+      prisma.salesOrderItem.findMany({
+        where: { order: { status: 'COMPLETED', paymentMethod: { not: 'STAFF' } } },
+        include: { item: true },
+      }),
+    ]);
+
+    // 6. Low Stock Alerts
+    const rawMaterials = await prisma.rawMaterial.findMany({
+      where: {
+        name: {
+          notIn: [
+            'Almond Milk Pack',
+            'Chocolate Syrup',
+            'Espresso Coffee Beans',
+            'Frozen Croissant (Raw)',
+            'Full Cream Milk',
+            'White Sugar',
+          ],
+        },
+      },
+    });
     const lowStockAlerts = rawMaterials
       .filter((mat) => mat.stockQty < mat.minStockLevel)
       .map((mat) => ({
@@ -96,7 +131,7 @@ export async function GET() {
         deductUnit: mat.deductUnit,
       }));
 
-    // 8. Recent Sales orders list
+    // 7. Recent Sales orders list
     const recentOrders = await prisma.salesOrder.findMany({
       take: 10,
       orderBy: { createdAt: 'desc' },
@@ -105,22 +140,86 @@ export async function GET() {
       },
     });
 
+    // 8. Historical summaries for the owner: every sales day, month, and shift.
+    const historicalOrders = await prisma.salesOrder.findMany({
+      where: { status: 'COMPLETED', paymentMethod: { not: 'STAFF' } },
+      select: { createdAt: true, total: true },
+    });
+    const cairoDateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const periodFor = (date: Date, monthly = false) => {
+      const parts = Object.fromEntries(cairoDateParts.formatToParts(date)
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value]));
+      return monthly ? `${parts.year}-${parts.month}` : `${parts.year}-${parts.month}-${parts.day}`;
+    };
+    const summarizeOrders = (monthly = false) => {
+      const summaries = new Map<string, { period: string; total: number; orders: number }>();
+      for (const order of historicalOrders) {
+        const period = periodFor(order.createdAt, monthly);
+        const current = summaries.get(period) || { period, total: 0, orders: 0 };
+        current.total += order.total;
+        current.orders += 1;
+        summaries.set(period, current);
+      }
+      return [...summaries.values()].sort((a, b) => b.period.localeCompare(a.period));
+    };
+    const shifts = await prisma.shift.findMany({
+      orderBy: { openedAt: 'desc' },
+      include: {
+        user: { select: { name: true } },
+        orders: { select: { status: true, total: true, paymentMethod: true } },
+      },
+    });
+    const shiftSummaries = shifts.map((shift) => {
+      const completedOrders = shift.orders.filter((order) => order.status === 'COMPLETED' && order.paymentMethod !== 'STAFF');
+      const staffOrders = shift.orders.filter((order) => order.status === 'COMPLETED' && order.paymentMethod === 'STAFF');
+      return {
+        id: shift.id,
+        openedAt: shift.openedAt,
+        closedAt: shift.closedAt,
+        cashierName: shift.cashierName || shift.user.name,
+        orderCount: completedOrders.length,
+        totalSales: completedOrders.reduce((sum, order) => sum + order.total, 0),
+        cashSales: completedOrders.filter((order) => order.paymentMethod === 'CASH').reduce((sum, order) => sum + order.total, 0),
+        instaPaySales: completedOrders.filter((order) => order.paymentMethod === 'INSTAPAY').reduce((sum, order) => sum + order.total, 0),
+        staffConsumption: staffOrders.reduce((sum, order) => sum + order.total, 0),
+        expectedCash: shift.expectedCash,
+        expectedInstaPay: shift.expectedInstaPay,
+        closedCash: shift.closedCash,
+        closedInstaPay: shift.closedInstaPay,
+        varianceCash: shift.varianceCash,
+        varianceInstaPay: shift.varianceInstaPay,
+      };
+    });
+
     return NextResponse.json({
       kpis: {
         todaySales,
         monthlySales,
-        estNetProfit,
+        todayStaffConsumption,
         activeShiftUser: activeShift ? activeShift.user.name : 'No Active Shift',
         activeShiftExpected: activeShift ? activeShift.expectedCash : 0,
       },
       paymentBreakdown: {
         cash,
         instapay,
-        visa,
       },
       topSellingItems,
+      topSellingItemsByPeriod: {
+        today: topSellingItems,
+        month: summarizeTopItems(monthOrderItems),
+        all: summarizeTopItems(allOrderItems),
+      },
       lowStockAlerts,
       recentOrders,
+      dailySales: summarizeOrders(),
+      monthlySalesHistory: summarizeOrders(true),
+      shiftSummaries,
     });
   } catch (error: any) {
     console.error('GET admin analytics error:', error);

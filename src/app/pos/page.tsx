@@ -7,11 +7,11 @@ import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { offlineDB, type LocalCategory, type LocalItem, type LocalModifier, type LocalHall, type LocalTable, type LocalSalesOrder, type LocalCart, type LocalCartItem } from '@/lib/dexie';
 import { 
   Coffee, LogOut, Wifi, WifiOff, Users, ShoppingBag, 
-  Trash2, Plus, Minus, DollarSign, CreditCard, RefreshCw, 
+  Trash2, Plus, Minus, DollarSign, RefreshCw, 
   CheckCircle2, AlertCircle, X, PlusCircle, Printer, Menu, Package, Lock
 } from 'lucide-react';
 
-type PaymentMethod = 'CASH' | 'INSTAPAY' | 'VISA';
+type PaymentMethod = 'CASH' | 'INSTAPAY' | 'STAFF';
 
 // Use native browser crypto - NOT the Node.js polyfill
 const generateUUID = (): string => {
@@ -33,10 +33,15 @@ const generateReceiptNumber = (): string => {
     String(now.getMonth() + 1).padStart(2, '0'),
     String(now.getDate()).padStart(2, '0'),
   ].join('');
+  const receiptDate = [
+    String(now.getDate()).padStart(2, '0'),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    now.getFullYear(),
+  ].join('-');
   const counterKey = `dn_receipt_counter_${dateKey}`;
   const nextNumber = Number.parseInt(localStorage.getItem(counterKey) || '0', 10) + 1;
   localStorage.setItem(counterKey, String(nextNumber));
-  return `DN-${dateKey}-${String(nextNumber).padStart(4, '0')}`;
+  return `DN-${receiptDate}-${String(nextNumber).padStart(4, '0')}`;
 };
 
 export default function POSPage() {
@@ -73,7 +78,9 @@ export default function POSPage() {
   const [floatCash, setFloatCash] = useState('0');
   const [closedCash, setClosedCash] = useState('');
   const [closedInstaPay, setClosedInstaPay] = useState('');
-  const [closedVisa, setClosedVisa] = useState('');
+  const [cashierName, setCashierName] = useState('');
+  const [savedCashierNames, setSavedCashierNames] = useState<Array<{ id: string; name: string }>>([]);
+  const [showCashierNames, setShowCashierNames] = useState(false);
   
   // Cashier Inventory & Recipes Modal states
   const [showInventoryModal, setShowInventoryModal] = useState(false);
@@ -107,6 +114,7 @@ export default function POSPage() {
   // POS Action inputs
   const [discountVal, setDiscountVal] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [staffName, setStaffName] = useState('');
   
   // Receipt print state
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -228,7 +236,7 @@ export default function POSPage() {
       if (dbCats.length > 0 && !selectedCategoryId) {
         setSelectedCategoryId(dbCats[0].id);
       }
-      if (dbHalls.length > 0 && !activeHallId) {
+      if (dbHalls.length > 0 && (!activeHallId || !dbHalls.some((hall) => hall.id === activeHallId))) {
         setActiveHallId(dbHalls[0].id);
       }
     } catch (error) {
@@ -286,9 +294,8 @@ export default function POSPage() {
     const subtotal = updatedItems.reduce((acc, item) => acc + item.totalPrice, 0);
     const rate = customDiscountRate !== null ? customDiscountRate : (cart.discountRate || 0);
     const disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
-    const taxRate = 0.14; // 14% VAT standard
-    const tax = Math.round((subtotal - disc) * taxRate * 100) / 100;
-    const total = Math.max(0, subtotal - disc + tax);
+    const tax = 0;
+    const total = Math.max(0, subtotal - disc);
 
     const updatedCart: LocalCart = {
       ...cart,
@@ -308,28 +315,33 @@ export default function POSPage() {
   // Add Item to Cart
   const handleItemClick = (item: LocalItem) => {
     if (!ensureActiveShift()) return;
-    const itemCategory = categories.find(c => c.id === item.categoryId);
-    const hasMods = itemCategory && (itemCategory.name.includes('Coffee') || itemCategory.name.includes('Drinks') || itemCategory.name.includes('قهوة') || itemCategory.name.includes('مشروبات'));
-    
-    if (hasMods) {
-      setActiveItemForMod(item);
-      setSelectedMods([]);
-      setShowModifiersModal(true);
-    } else {
-      addItemToCartDirectly(item, []);
+    if (item.name === 'حجز عيد ميلاد') {
+      const enteredPrice = window.prompt('اكتب قيمة حجز عيد الميلاد', '');
+      if (enteredPrice === null) return;
+      const price = Number(enteredPrice);
+      if (!Number.isFinite(price) || price <= 0) {
+        triggerAlert('error', 'اكتب قيمة حجز صحيحة أكبر من صفر.');
+        return;
+      }
+      void addItemToCartDirectly(item, [], price);
+      return;
     }
+    setActiveItemForMod(item);
+    setSelectedMods([]);
+    setShowModifiersModal(true);
   };
 
-  const addItemToCartDirectly = async (item: LocalItem, selectedModList: LocalModifier[]) => {
+  const addItemToCartDirectly = async (item: LocalItem, selectedModList: LocalModifier[], customUnitPrice?: number) => {
     if (!cart) return;
 
     const modPriceImpact = selectedModList.reduce((acc, m) => acc + m.priceImpact, 0);
-    const unitPrice = item.price + modPriceImpact;
+    const unitPrice = customUnitPrice ?? (item.price + modPriceImpact);
 
     // Check if identical item (same ID and same modifiers) already exists in cart
     const existingIndex = cart.items.findIndex(
       (ci) => 
         ci.itemId === item.id && 
+        ci.unitPrice === unitPrice &&
         ci.modifiers.length === selectedModList.length &&
         ci.modifiers.every((cm) => selectedModList.some((sm) => sm.id === cm.modifierId))
     );
@@ -425,16 +437,17 @@ export default function POSPage() {
     setDiscountVal('');
   };
 
-  // Apply discount
-  const handleApplyDiscount = () => {
+  // Apply a valid discount immediately while the cashier types.
+  const handleDiscountChange = (value: string) => {
+    setDiscountVal(value);
     if (!cart) return;
-    const value = parseFloat(discountVal) || 0;
-    if (value < 0 || value > 100) {
-      triggerAlert('error', 'يجب أن تكون نسبة الخصم بين 0 و 100');
-      return;
-    }
-    saveAndRecalculateCart(cart.items, value);
-    triggerAlert('success', `تم تطبيق خصم بنسبة ${value}%`);
+
+    const enteredDiscount = value === '' ? 0 : Number(value);
+    if (!Number.isFinite(enteredDiscount) || enteredDiscount < 0) return;
+
+    const discount = Math.min(enteredDiscount, 100);
+    if (discount !== enteredDiscount) setDiscountVal(String(discount));
+    void saveAndRecalculateCart(cart.items, discount);
   };
 
   // 5. Place / Complete Order
@@ -449,6 +462,10 @@ export default function POSPage() {
       setShowOpenShift(true);
       return;
     }
+    if (paymentMethod === 'STAFF' && !staffName.trim()) {
+      triggerAlert('error', 'اكتب اسم الموظف الذي استلم الأصناف.');
+      return;
+    }
 
     try {
       const orderId = generateUUID();
@@ -460,6 +477,7 @@ export default function POSPage() {
         tableId: cart.tableId,
         orderType: cart.orderType,
         paymentMethod: paymentMethod,
+        staffName: paymentMethod === 'STAFF' ? staffName.trim() : null,
         status: 'COMPLETED',
         subtotal: cart.subtotal,
         discount: cart.discount,
@@ -489,8 +507,6 @@ export default function POSPage() {
         updatedExpected.expectedCash += cart.total;
       } else if (paymentMethod === 'INSTAPAY') {
         updatedExpected.expectedInstaPay += cart.total;
-      } else if (paymentMethod === 'VISA') {
-        updatedExpected.expectedVisa += cart.total;
       }
       setActiveShift(updatedExpected);
 
@@ -511,6 +527,7 @@ export default function POSPage() {
         total: 0,
       });
       setDiscountVal('0');
+      setStaffName('');
 
       // 4. Set receipt for print preview
       setReceiptOrder(newOrder);
@@ -549,19 +566,25 @@ export default function POSPage() {
   useEffect(() => {
     if (showOpenShift) {
       checkExistingShift();
+      fetch('/api/cashier-names')
+        .then((res) => res.ok ? res.json() : null)
+        .then((data) => data && setSavedCashierNames(data.cashierNames))
+        .catch((error) => console.error('Failed to load cashier names:', error));
     } else {
       setExistingShift(null);
       setCheckingShift(false);
+      setShowCashierNames(false);
     }
   }, [showOpenShift, checkExistingShift]);
 
   // 6b. Takeover an existing open shift
-  const handleTakeoverShift = () => {
+  const handleTakeoverShift = (openSettlement = false) => {
     if (!existingShift) return;
     // Map the API response to our ShiftState shape
     const shiftState = {
       id: existingShift.id,
       userId: existingShift.userId,
+      cashierName: existingShift.cashierName || existingShift.user?.name || null,
       floatCash: existingShift.floatCash,
       expectedCash: existingShift.expectedCash,
       expectedInstaPay: existingShift.expectedInstaPay,
@@ -571,7 +594,12 @@ export default function POSPage() {
     setActiveShift(shiftState);
     setExistingShift(null);
     setShowOpenShift(false);
-    triggerAlert('success', `تم استلام الوردية المفتوحة وتسجيل الدخول عليها بنجاح.`);
+    if (openSettlement) {
+      setShowCloseShift(true);
+      triggerAlert('success', 'تم استلام الوردية. سجّل مبالغ التسوية لإغلاقها الآن.');
+    } else {
+      triggerAlert('success', 'تم استلام الوردية المفتوحة وتسجيل الدخول عليها بنجاح.');
+    }
   };
 
   // 6c. Shift Opening POST (new shift)
@@ -583,7 +611,11 @@ export default function POSPage() {
       const res = await fetch('/api/shifts/active', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, floatCash: parseFloat(floatCash) || 0 }),
+        body: JSON.stringify({
+          userId: user.id,
+          floatCash: parseFloat(floatCash) || 0,
+          cashierName,
+        }),
       });
 
       const data = await res.json();
@@ -591,9 +623,20 @@ export default function POSPage() {
 
       setActiveShift(data.shift);
       setShowOpenShift(false);
+      setCashierName('');
       triggerAlert('success', `تم فتح الوردية بعهدة افتتاحية: EGP ${floatCash}`);
     } catch (err: any) {
       triggerAlert('error', err.message || 'خطأ في فتح الشفت');
+    }
+  };
+
+  const handleDeleteSavedCashierName = async (id: string) => {
+    try {
+      const res = await fetch(`/api/cashier-names?id=${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      setSavedCashierNames((names) => names.filter((name) => name.id !== id));
+    } catch {
+      triggerAlert('error', 'تعذر حذف الاسم المحفوظ.');
     }
   };
 
@@ -632,7 +675,7 @@ export default function POSPage() {
           shiftId: activeShift.id,
           closedCash: parseFloat(closedCash) || 0,
           closedInstaPay: parseFloat(closedInstaPay) || 0,
-          closedVisa: parseFloat(closedVisa) || 0,
+          closedVisa: 0,
         }),
       });
 
@@ -644,7 +687,6 @@ export default function POSPage() {
       setShowCloseShift(false);
       setClosedCash('');
       setClosedInstaPay('');
-      setClosedVisa('');
       // Removed logout() to keep the cashier logged in
     } catch (err: any) {
       triggerAlert('error', err.message || 'خطأ أثناء تقفيل الشفت');
@@ -799,6 +841,31 @@ export default function POSPage() {
     setRecipeIngredients(existing.length > 0 ? existing : [{ rawMaterialId: '', quantity: 0 }]);
   };
 
+  const handlePOSUpdateItemPrice = async (item: { id: string; name: string; price: number }) => {
+    const enteredPrice = window.prompt(`السعر الجديد لـ ${item.name}`, String(item.price));
+    if (enteredPrice === null) return;
+    const price = Number(enteredPrice);
+    if (!Number.isFinite(price) || price < 0) {
+      triggerAlert('error', 'اكتب سعرًا صحيحًا أكبر من أو يساوي صفر.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/items/price', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id, price }),
+      });
+      if (!res.ok) throw new Error();
+      await offlineDB.items.update(item.id, { price });
+      setItems((currentItems) => currentItems.map((currentItem) => currentItem.id === item.id ? { ...currentItem, price } : currentItem));
+      setRecipesItems((currentItems) => currentItems.map((currentItem) => currentItem.id === item.id ? { ...currentItem, price } : currentItem));
+      triggerAlert('success', `تم تعديل سعر ${item.name} إلى EGP ${price.toFixed(2)}`);
+    } catch {
+      triggerAlert('error', 'تعذر تعديل سعر الصنف.');
+    }
+  };
+
   const handlePOSRestockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMatId || !inventoryQty) return;
@@ -896,6 +963,8 @@ export default function POSPage() {
   const handlePrintReceipt = () => {
     window.print();
   };
+  const isBirthdayBookingReceipt = receiptOrder?.items.length === 1 &&
+    items.find((item) => item.id === receiptOrder.items[0].itemId)?.name === 'حجز عيد ميلاد';
 
   if (!mounted) {
     return (
@@ -956,9 +1025,15 @@ export default function POSPage() {
           )}
 
           {activeShift && (
-            <div className="text-[10px] sm:text-xs text-left ml-2 hidden md:block shrink-0">
-              <p className="text-gray-400">نقدية الدرج المتوقعة</p>
-              <p className="font-bold text-cyan-400">EGP {activeShift.expectedCash.toFixed(2)}</p>
+            <div className="flex items-center gap-4 text-[10px] sm:text-xs text-left ml-2 hidden md:flex shrink-0">
+              <div>
+                <p className="text-gray-400">نقدية الدرج المتوقعة</p>
+                <p className="font-bold text-cyan-400">EGP {activeShift.expectedCash.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-gray-400">إنستا باي المتوقع</p>
+                <p className="font-bold text-purple-400">EGP {activeShift.expectedInstaPay.toFixed(2)}</p>
+              </div>
             </div>
           )}
 
@@ -1227,23 +1302,16 @@ export default function POSPage() {
           <div className="p-4 border-t border-white/5 bg-[#090d16] shrink-0 space-y-4">
             
             {/* Discount Tool */}
-            <div className="flex gap-2 flex-row-reverse">
+            <div className="flex flex-col gap-1">
               <input
                 type="number"
                 value={discountVal}
-                onChange={(e) => setDiscountVal(e.target.value)}
-                className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
+                onChange={(e) => handleDiscountChange(e.target.value)}
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
                 placeholder="نسبة الخصم %"
                 min="0"
                 max="100"
               />
-              <button 
-                onClick={handleApplyDiscount}
-                disabled={!cart || cart.items.length === 0}
-                className="px-4 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 text-xs font-semibold transition-all disabled:opacity-50"
-              >
-                خصم
-              </button>
             </div>
 
             {/* Price Calculations */}
@@ -1258,10 +1326,6 @@ export default function POSPage() {
                   <span>-EGP {cart.discount.toFixed(2)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-xs text-gray-400 flex-row-reverse">
-                <span>ضريبة القيمة المضافة 14%</span>
-                <span>EGP {cart?.tax.toFixed(2) || '0.00'}</span>
-              </div>
               <div className="flex justify-between text-sm font-bold text-white pt-1 flex-row-reverse">
                 <span>المطلوب دفعه</span>
                 <span className="text-cyan-400 text-base">EGP {cart?.total.toFixed(2) || '0.00'}</span>
@@ -1299,20 +1363,30 @@ export default function POSPage() {
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>إنستا باي</span>
                 </button>
-
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('VISA')}
+                  onClick={() => setPaymentMethod('STAFF')}
                   className={`flex flex-col items-center gap-1 py-2 rounded-xl border text-xs font-semibold transition-all ${
-                    paymentMethod === 'VISA'
-                      ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm'
+                    paymentMethod === 'STAFF'
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
                       : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
                   }`}
                 >
-                  <CreditCard className="w-3.5 h-3.5" />
-                  <span>فيزا</span>
+                  <Users className="w-3.5 h-3.5" />
+                  <span>صرف ستاف</span>
                 </button>
+
               </div>
+              {paymentMethod === 'STAFF' && (
+                <input
+                  type="text"
+                  required
+                  value={staffName}
+                  onChange={(e) => setStaffName(e.target.value)}
+                  className="w-full bg-slate-900 border border-amber-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 text-right"
+                  placeholder="اسم الموظف الذي استلم الأصناف"
+                />
+              )}
             </div>
 
             {/* Complete checkout button */}
@@ -1322,7 +1396,7 @@ export default function POSPage() {
               className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-600 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md shadow-cyan-500/10 active:scale-98 disabled:opacity-50 text-sm flex items-center justify-center gap-2 flex-row-reverse"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>تأكيد وتقفيل الحساب (EGP {cart?.total.toFixed(2) || '0.00'})</span>
+              <span>{paymentMethod === 'STAFF' ? `تسجيل صرف ستاف (EGP ${cart?.total.toFixed(2) || '0.00'})` : `تأكيد وتقفيل الحساب (EGP ${cart?.total.toFixed(2) || '0.00'})`}</span>
             </button>
           </div>
         </section>
@@ -1386,15 +1460,23 @@ export default function POSPage() {
                   </div>
                 </div>
 
-                <button
-                  onClick={handleTakeoverShift}
-                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl shadow-lg transition-all"
-                >
-                  ✅ استلم الوردية دي وابدأ شغل
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => handleTakeoverShift()}
+                    className="py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl shadow-lg transition-all text-xs"
+                  >
+                    استلم الوردية وابدأ شغل
+                  </button>
+                  <button
+                    onClick={() => handleTakeoverShift(true)}
+                    className="py-3 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/25 text-rose-300 font-bold rounded-xl transition-all text-xs"
+                  >
+                    استلمها وقفّل اليومية
+                  </button>
+                </div>
 
                 <p className="text-center text-[10px] text-gray-500">
-                  أو لو عايز تقفل الوردية القديمة وتفتح جديدة، روح للأدمن أول وقفّلها من هناك.
+                  اختر إغلاق اليومية لو الوردية القديمة انتهت وتريد فتح وردية جديدة بعدها.
                 </p>
               </div>
             ) : (
@@ -1404,6 +1486,52 @@ export default function POSPage() {
                 <p className="text-xs text-gray-400 mb-6">اكتب عهدة الكاش الافتتاحية اللي في الدرج عشان تبدأ شفت جديد والبيع.</p>
                 
                 <form onSubmit={handleOpenShiftSubmit} className="space-y-4">
+                  <div className="relative">
+                    <label className="block text-xs font-semibold text-gray-400 mb-2">اسم الكاشير الذي سيفتح الوردية</label>
+                    <input
+                      type="text"
+                      required
+                      value={cashierName}
+                      onFocus={() => setShowCashierNames(true)}
+                      onChange={(e) => {
+                        setCashierName(e.target.value);
+                        setShowCashierNames(true);
+                      }}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
+                      placeholder="اكتب الاسم أو اختَره من القائمة"
+                      autoComplete="off"
+                    />
+                    {showCashierNames && savedCashierNames.length > 0 && (
+                      <div className="absolute z-50 top-full mt-1 w-full max-h-44 overflow-y-auto rounded-xl border border-white/10 bg-slate-900 shadow-2xl">
+                        {savedCashierNames
+                          .filter((savedName) => savedName.name.includes(cashierName.trim()))
+                          .map((savedName) => (
+                            <div key={savedName.id} className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/5">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  setCashierName(savedName.name);
+                                  setShowCashierNames(false);
+                                }}
+                                className="flex-1 text-right text-sm text-white"
+                              >
+                                {savedName.name}
+                              </button>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => handleDeleteSavedCashierName(savedName.id)}
+                                aria-label={`حذف ${savedName.name}`}
+                                className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-400 mb-2">العهدة الافتتاحية في الدرج (EGP)</label>
                     <div className="relative">
@@ -1446,14 +1574,10 @@ export default function POSPage() {
             <p className="text-xs text-gray-400 mb-6">اكتب المبالغ الفعلية اللي معاك في الدرج والإنستا باي لتسوية الوردية وحساب العجز أو الزيادة.</p>
             
             <form onSubmit={handleCloseShiftSubmit} className="space-y-5">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
                   <span className="text-[10px] text-gray-400">الكاش المتوقع بالدرج</span>
                   <p className="text-sm font-bold text-cyan-400 mt-1">EGP {activeShift?.expectedCash.toFixed(2) || '0.00'}</p>
-                </div>
-                <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
-                  <span className="text-[10px] text-gray-400">المتوقع فيزا</span>
-                  <p className="text-sm font-bold text-blue-400 mt-1">EGP {activeShift?.expectedVisa.toFixed(2) || '0.00'}</p>
                 </div>
                 <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
                   <span className="text-[10px] text-gray-400">المتوقع إنستا باي</span>
@@ -1471,18 +1595,6 @@ export default function POSPage() {
                     onChange={(e) => setClosedCash(e.target.value)}
                     className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
                     placeholder="اكتب المبلغ الفعلي الكاش هنا"
-                    min="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي الفيزا الفعلي (EGP)</label>
-                  <input
-                    type="number"
-                    required
-                    value={closedVisa}
-                    onChange={(e) => setClosedVisa(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-blue-500 text-right"
-                    placeholder="اكتب إجمالي الفيزا هنا"
                     min="0"
                   />
                 </div>
@@ -1572,11 +1684,14 @@ export default function POSPage() {
             >
               <X className="w-5 h-5" />
             </button>
-            <h3 className="text-xl font-bold text-white mb-1">تعديل وإضافات الطلب</h3>
-            <p className="text-xs text-gray-400 mb-6">إضافات متاحة لـ {activeItemForMod.name}</p>
+            <h3 className="text-xl font-bold text-white mb-1">إضافة على السعر</h3>
+            <p className="text-xs text-gray-400 mb-6">اختر قيمة أو أكثر لإضافتها إلى {activeItemForMod.name}. لن تخصم أي خامات من المخزن.</p>
             
-            <div className="space-y-4 max-h-[300px] overflow-y-auto pl-1">
-              {modifiers.map((mod) => {
+            <div className="grid grid-cols-2 gap-3">
+              {modifiers
+                .filter((mod) => mod.name.startsWith('إضافة عامة'))
+                .sort((a, b) => a.priceImpact - b.priceImpact)
+                .map((mod) => {
                 const isSelected = selectedMods.includes(mod.id);
                 return (
                   <button
@@ -1588,14 +1703,14 @@ export default function POSPage() {
                         setSelectedMods(prev => [...prev, mod.id]);
                       }
                     }}
-                    className={`w-full flex items-center justify-between p-3.5 rounded-xl border text-right transition-all flex-row-reverse ${
+                    className={`flex flex-col items-center justify-center gap-1.5 min-h-20 rounded-xl border text-center transition-all ${
                       isSelected 
                         ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
                         : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
                     }`}
                   >
-                    <span className="text-xs font-semibold">{mod.name}</span>
-                    <span className="text-xs font-bold text-cyan-400">+EGP {mod.priceImpact.toFixed(2)}</span>
+                    <span className="text-xs font-semibold">إضافة</span>
+                    <span className="text-sm font-bold text-cyan-400">+EGP {mod.priceImpact.toFixed(2)}</span>
                   </button>
                 );
               })}
@@ -1625,7 +1740,7 @@ export default function POSPage() {
               <div className="flex justify-between text-sm text-gray-300 flex-row-reverse">
                 <span>طريقة الدفع</span>
                 <span className="font-bold text-white">
-                  {paymentMethod === 'CASH' ? 'كاش' : paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'فيزا'}
+                  {paymentMethod === 'CASH' ? 'كاش' : paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'صرف ستاف'}
                 </span>
               </div>
             </div>
@@ -1669,38 +1784,50 @@ export default function POSPage() {
             <div className="p-4 bg-white text-black font-mono text-[11px] rounded-lg shadow-inner max-h-[350px] overflow-y-auto leading-relaxed text-right" dir="rtl">
               <div className="text-center font-bold text-xs uppercase tracking-wide border-b border-dashed border-gray-400 pb-2">
                 كافيه داي أند نايت (Day & Night)<br />
-                القاهرة، مصر<br />
                 رقم الفاتورة: {receiptOrder.receiptNumber}
               </div>
               <div className="my-2 border-b border-dashed border-gray-400 pb-2 space-y-0.5">
                 <p>تاريخ: {new Date(receiptOrder.createdAt).toLocaleDateString()}</p>
                 <p>وقت: {new Date(receiptOrder.createdAt).toLocaleTimeString()}</p>
-                <p>النوع: {receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</p>
-                {receiptOrder.tableId && (
-                  <p>الترابيزة: {tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة'}</p>
-                )}
-                <p>الكاشير: {user?.name}</p>
+                {!isBirthdayBookingReceipt && <>
+                  <p>النوع: {receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</p>
+                  {receiptOrder.tableId && (
+                    <p>الترابيزة: {tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة'}</p>
+                  )}
+                </>}
+                <p>الكاشير: {activeShift?.cashierName || user?.name}</p>
               </div>
 
               <div className="space-y-1 py-2 border-b border-dashed border-gray-400">
                 {receiptOrder.items.map((item, idx) => {
                   const itDetails = items.find(i => i.id === item.itemId);
+                  const isBirthdayBooking = itDetails?.name === 'حجز عيد ميلاد';
+                  const additionsTotal = item.modifiers.reduce((sum, modifier) => sum + modifier.unitPriceImpact, 0);
+                  const baseUnitPrice = item.unitPrice - additionsTotal;
                   return (
                     <div key={idx} className="space-y-0.5">
-                      <div className="flex justify-between flex-row-reverse">
-                        <span>{itDetails?.name || 'صنف'} x{item.qty}</span>
-                        <span>EGP {item.totalPrice.toFixed(2)}</span>
-                      </div>
-                      {item.modifiers.length > 0 && (
-                        <div className="pr-3 text-[10px] opacity-75">
-                          {item.modifiers.map((m, mIdx) => {
-                            const modDetails = modifiers.find(mo => mo.id === m.modifierId);
-                            return (
-                              <p key={mIdx}>+{modDetails?.name || 'إضافة'}</p>
-                            );
-                          })}
+                      {isBirthdayBooking ? (
+                        <div className="flex justify-between flex-row-reverse">
+                          <span>حجز عيد ميلاد</span>
+                          <span>قيمة الحجز: EGP {item.totalPrice.toFixed(2)}</span>
                         </div>
-                      )}
+                      ) : <>
+                        <div className="flex justify-between flex-row-reverse">
+                          <span>{itDetails?.name || 'صنف'} x{item.qty}</span>
+                        </div>
+                        {item.modifiers.length > 0 ? (
+                          <div className="grid grid-cols-3 gap-1 text-[9px] opacity-75 text-center" dir="rtl">
+                            <span className="whitespace-nowrap">إجمالي {item.totalPrice.toFixed(2)} EGP</span>
+                            <span className="whitespace-nowrap">إضافة {additionsTotal.toFixed(2)} EGP</span>
+                            <span className="whitespace-nowrap">سعر {baseUnitPrice.toFixed(2)} EGP</span>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between text-[10px] opacity-75 flex-row-reverse">
+                            <span>سعر {baseUnitPrice.toFixed(2)} EGP</span>
+                            <span>إجمالي {item.totalPrice.toFixed(2)} EGP</span>
+                          </div>
+                        )}
+                      </>}
                     </div>
                   );
                 })}
@@ -1717,10 +1844,6 @@ export default function POSPage() {
                     <span>-EGP {receiptOrder.discount.toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex justify-between flex-row-reverse">
-                  <span>ضريبة 14%:</span>
-                  <span>EGP {receiptOrder.tax.toFixed(2)}</span>
-                </div>
                 <div className="flex justify-between font-bold text-xs border-t border-dashed border-gray-400 pt-1 flex-row-reverse">
                   <span>الإجمالي النهائي:</span>
                   <span>EGP {receiptOrder.total.toFixed(2)}</span>
@@ -1728,7 +1851,7 @@ export default function POSPage() {
               </div>
 
               <div className="text-center font-bold uppercase mt-4 pt-2 border-t border-dashed border-gray-400">
-                تم الدفع {receiptOrder.paymentMethod === 'CASH' ? 'كاش' : receiptOrder.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'فيزا'}<br />
+                {receiptOrder.paymentMethod === 'STAFF' ? `صرف ستاف: ${receiptOrder.staffName || 'غير مسجل'}` : `تم الدفع ${receiptOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}`}<br />
                 شكراً لزيارتكم!
               </div>
             </div>
@@ -1760,38 +1883,50 @@ export default function POSPage() {
         <div className="hidden print:block print-area font-mono text-[10px] text-black bg-white leading-relaxed text-right" dir="rtl">
           <div className="text-center font-bold text-xs uppercase border-b border-dashed border-gray-500 pb-2">
             كافيه داي أند نايت (Day & Night)<br />
-            القاهرة، مصر<br />
             رقم الفاتورة: {receiptOrder.receiptNumber}
           </div>
           <div className="my-2 border-b border-dashed border-gray-500 pb-1">
             <p>تاريخ: {new Date(receiptOrder.createdAt).toLocaleDateString()}</p>
             <p>وقت: {new Date(receiptOrder.createdAt).toLocaleTimeString()}</p>
-            <p>النوع: {receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</p>
-            {receiptOrder.tableId && (
-              <p>الترابيزة: {tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة'}</p>
-            )}
-            <p>الكاشير: {user?.name}</p>
+            {!isBirthdayBookingReceipt && <>
+              <p>النوع: {receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</p>
+              {receiptOrder.tableId && (
+                <p>الترابيزة: {tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة'}</p>
+              )}
+            </>}
+            <p>الكاشير: {activeShift?.cashierName || user?.name}</p>
           </div>
 
           <div className="space-y-1 py-1 border-b border-dashed border-gray-500">
             {receiptOrder.items.map((item, idx) => {
               const itDetails = items.find(i => i.id === item.itemId);
+              const isBirthdayBooking = itDetails?.name === 'حجز عيد ميلاد';
+              const additionsTotal = item.modifiers.reduce((sum, modifier) => sum + modifier.unitPriceImpact, 0);
+              const baseUnitPrice = item.unitPrice - additionsTotal;
               return (
                 <div key={idx} className="space-y-0.5">
-                  <div className="flex justify-between flex-row-reverse">
-                    <span>{itDetails?.name || 'صنف'} x{item.qty}</span>
-                    <span>EGP {item.totalPrice.toFixed(2)}</span>
-                  </div>
-                  {item.modifiers.length > 0 && (
-                    <div className="pr-3 text-[9px] opacity-75">
-                      {item.modifiers.map((m, mIdx) => {
-                        const modDetails = modifiers.find(mo => mo.id === m.modifierId);
-                        return (
-                          <p key={mIdx}>+{modDetails?.name || 'إضافة'}</p>
-                        );
-                      })}
+                  {isBirthdayBooking ? (
+                    <div className="flex justify-between flex-row-reverse">
+                      <span>حجز عيد ميلاد</span>
+                      <span>قيمة الحجز: EGP {item.totalPrice.toFixed(2)}</span>
                     </div>
-                  )}
+                  ) : <>
+                    <div className="flex justify-between flex-row-reverse">
+                      <span>{itDetails?.name || 'صنف'} x{item.qty}</span>
+                    </div>
+                    {item.modifiers.length > 0 ? (
+                      <div className="grid grid-cols-3 gap-1 text-[8px] opacity-75 text-center" dir="rtl">
+                        <span className="whitespace-nowrap">إجمالي {item.totalPrice.toFixed(2)} EGP</span>
+                        <span className="whitespace-nowrap">إضافة {additionsTotal.toFixed(2)} EGP</span>
+                        <span className="whitespace-nowrap">سعر {baseUnitPrice.toFixed(2)} EGP</span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between text-[9px] opacity-75 flex-row-reverse">
+                        <span>سعر {baseUnitPrice.toFixed(2)} EGP</span>
+                        <span>إجمالي {item.totalPrice.toFixed(2)} EGP</span>
+                      </div>
+                    )}
+                  </>}
                 </div>
               );
             })}
@@ -1808,10 +1943,6 @@ export default function POSPage() {
                 <span>-EGP {receiptOrder.discount.toFixed(2)}</span>
               </div>
             )}
-            <div className="flex justify-between flex-row-reverse">
-              <span>ضريبة 14%:</span>
-              <span>EGP {receiptOrder.tax.toFixed(2)}</span>
-            </div>
             <div className="flex justify-between font-bold border-t border-dashed border-gray-500 pt-0.5 flex-row-reverse">
               <span>الإجمالي النهائي:</span>
               <span>EGP {receiptOrder.total.toFixed(2)}</span>
@@ -1819,7 +1950,7 @@ export default function POSPage() {
           </div>
 
           <div className="text-center font-bold uppercase mt-4 pt-2 border-t border-dashed border-gray-500">
-            تم الدفع {receiptOrder.paymentMethod === 'CASH' ? 'كاش' : receiptOrder.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'فيزا'}<br />
+            {receiptOrder.paymentMethod === 'STAFF' ? `صرف ستاف: ${receiptOrder.staffName || 'غير مسجل'}` : `تم الدفع ${receiptOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}`}<br />
             شكراً لزيارتكم!
           </div>
         </div>
@@ -2234,36 +2365,27 @@ export default function POSPage() {
                   </div>
                 ) : (
                   // --- CASHIER RECIPE LIST ---
-                  <div className="grid grid-cols-2 gap-4 max-h-[300px] overflow-y-auto">
+                  <div className="grid grid-cols-1 gap-4 max-h-[300px] overflow-y-auto">
                     <div className="border border-white/5 rounded-xl p-3 bg-slate-900/20 text-right" dir="rtl">
                       <h4 className="font-bold text-white text-[11px] pb-1 border-b border-white/5 mb-2">وصفات المنيو</h4>
                       <div className="space-y-2">
                         {recipesItems.map((item) => (
                           <div key={item.id} className="flex justify-between items-center text-[10px] border-b border-white/5 pb-2 flex-row-reverse text-right">
                             <span className="text-white font-semibold">{item.name}</span>
-                            <button
-                              onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
-                              className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 text-right font-sans"
-                            >
-                              تعديل
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="border border-white/5 rounded-xl p-3 bg-slate-900/20 text-right" dir="rtl">
-                      <h4 className="font-bold text-white text-[11px] pb-1 border-b border-white/5 mb-2">وصفات الإضافات</h4>
-                      <div className="space-y-2">
-                        {recipesModifiers.map((mod) => (
-                          <div key={mod.id} className="flex justify-between items-center text-[10px] border-b border-white/5 pb-2 flex-row-reverse text-right">
-                            <span className="text-white font-semibold">{mod.name}</span>
-                            <button
-                              onClick={() => startEditRecipe({ type: 'modifier', id: mod.id, name: mod.name, recipe: mod.recipe })}
-                              className="px-2 py-0.5 bg-purple-500/10 text-purple-300 border border-purple-500/20 rounded hover:bg-purple-500/20 text-right font-sans"
-                            >
-                              تعديل
-                            </button>
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => handlePOSUpdateItemPrice(item)}
+                                className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded hover:bg-emerald-500/20 text-right font-sans"
+                              >
+                                EGP {item.price.toFixed(2)}
+                              </button>
+                              <button
+                                onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
+                                className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 text-right font-sans"
+                              >
+                                تعديل
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>

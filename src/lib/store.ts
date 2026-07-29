@@ -10,6 +10,7 @@ export interface UserState {
 export interface ShiftState {
   id: string;
   userId: string;
+  cashierName?: string | null;
   floatCash: number;
   expectedCash: number;
   expectedInstaPay: number;

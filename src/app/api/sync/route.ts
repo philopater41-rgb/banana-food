@@ -21,7 +21,8 @@ interface SyncOrder {
   shiftId: string;
   tableId?: string | null;
   orderType: string; // "DINE_IN" | "TAKEAWAY"
-  paymentMethod: string; // "CASH" | "INSTAPAY" | "VISA"
+  paymentMethod: string; // "CASH" | "INSTAPAY" | "STAFF"
+  staffName?: string | null;
   status: string; // "COMPLETED" | "CANCELLED"
   subtotal: number;
   discount: number;
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
               tableId: order.tableId || null,
               orderType: order.orderType,
               paymentMethod: order.paymentMethod,
+              staffName: order.staffName || null,
               status: order.status,
               subtotal: order.subtotal,
               discount: order.discount,

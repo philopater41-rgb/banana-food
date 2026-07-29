@@ -12,7 +12,7 @@ import {
 interface KPIState {
   todaySales: number;
   monthlySales: number;
-  estNetProfit: number;
+  todayStaffConsumption: number;
   activeShiftUser: string;
   activeShiftExpected: number;
 }
@@ -20,7 +20,6 @@ interface KPIState {
 interface PaymentBreakdown {
   cash: number;
   instapay: number;
-  visa: number;
 }
 
 interface TopItem {
@@ -67,6 +66,30 @@ interface RecentOrder {
   table?: { name: string } | null;
 }
 
+interface SalesSummary {
+  period: string;
+  total: number;
+  orders: number;
+}
+
+interface ShiftSummary {
+  id: string;
+  openedAt: string;
+  closedAt: string | null;
+  cashierName: string;
+  orderCount: number;
+  totalSales: number;
+  cashSales: number;
+  instaPaySales: number;
+  staffConsumption: number;
+  expectedCash: number;
+  expectedInstaPay: number;
+  closedCash: number | null;
+  closedInstaPay: number | null;
+  varianceCash: number;
+  varianceInstaPay: number;
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const { user, logout } = useAppStore();
@@ -74,20 +97,26 @@ export default function AdminPage() {
   // Active Tab
   const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'wastage' | 'recipes'>('dashboard');
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+  const [todayLabel, setTodayLabel] = useState('');
 
   // API Data States
   const [kpis, setKpis] = useState<KPIState>({
     todaySales: 0,
     monthlySales: 0,
-    estNetProfit: 0,
+    todayStaffConsumption: 0,
     activeShiftUser: 'Loading...',
     activeShiftExpected: 0
   });
   
-  const [payments, setPayments] = useState<PaymentBreakdown>({ cash: 0, instapay: 0, visa: 0 });
+  const [payments, setPayments] = useState<PaymentBreakdown>({ cash: 0, instapay: 0 });
   const [topItems, setTopItems] = useState<TopItem[]>([]);
+  const [topItemsByPeriod, setTopItemsByPeriod] = useState<{ today: TopItem[]; month: TopItem[]; all: TopItem[] }>({ today: [], month: [], all: [] });
+  const [topItemsPeriod, setTopItemsPeriod] = useState<'today' | 'month' | 'all'>('today');
   const [lowStock, setLowStock] = useState<LowStock[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [dailySales, setDailySales] = useState<SalesSummary[]>([]);
+  const [monthlySalesHistory, setMonthlySalesHistory] = useState<SalesSummary[]>([]);
+  const [shiftSummaries, setShiftSummaries] = useState<ShiftSummary[]>([]);
   
   // Inventory list state
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
@@ -135,6 +164,15 @@ export default function AdminPage() {
     }
   }, [user, router]);
 
+  useEffect(() => {
+    setTodayLabel(new Date().toLocaleDateString('ar-EG', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }));
+  }, []);
+
   const triggerAlert = (type: 'success' | 'error', text: string) => {
     setAlertMsg({ type, text });
     setTimeout(() => setAlertMsg(null), 3000);
@@ -150,8 +188,12 @@ export default function AdminPage() {
         setKpis(data.kpis);
         setPayments(data.paymentBreakdown);
         setTopItems(data.topSellingItems);
+        setTopItemsByPeriod(data.topSellingItemsByPeriod || { today: data.topSellingItems, month: [], all: [] });
         setLowStock(data.lowStockAlerts);
         setRecentOrders(data.recentOrders);
+        setDailySales(data.dailySales);
+        setMonthlySalesHistory(data.monthlySalesHistory);
+        setShiftSummaries(data.shiftSummaries);
       }
     } catch (e) {
       console.error(e);
@@ -392,12 +434,35 @@ export default function AdminPage() {
     setRecipeIngredients(existing.length > 0 ? existing : [{ rawMaterialId: '', quantity: 0 }]);
   };
 
+  const handleAdminUpdateItemPrice = async (item: { id: string; name: string; price: number }) => {
+    const enteredPrice = window.prompt(`السعر الجديد لـ ${item.name}`, String(item.price));
+    if (enteredPrice === null) return;
+    const price = Number(enteredPrice);
+    if (!Number.isFinite(price) || price < 0) {
+      triggerAlert('error', 'اكتب سعرًا صحيحًا أكبر من أو يساوي صفر.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/items/price', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id, price }),
+      });
+      if (!res.ok) throw new Error();
+      setRecipesItems((currentItems) => currentItems.map((currentItem) => currentItem.id === item.id ? { ...currentItem, price } : currentItem));
+      triggerAlert('success', `تم تعديل سعر ${item.name} إلى EGP ${price.toFixed(2)}`);
+    } catch {
+      triggerAlert('error', 'تعذر تعديل سعر الصنف.');
+    }
+  };
+
   // SVG Chart Computations
-  const maxItemTotal = topItems.reduce((max, i) => Math.max(max, i.total), 0) || 1;
-  const totalPaymentSum = (payments.cash + payments.instapay + payments.visa) || 1;
+  const displayedTopItems = topItemsByPeriod[topItemsPeriod] || topItems;
+  const maxItemTotal = displayedTopItems.reduce((max, i) => Math.max(max, i.total), 0) || 1;
+  const totalPaymentSum = (payments.cash + payments.instapay) || 1;
   const cashPct = Math.round((payments.cash / totalPaymentSum) * 100);
   const instapayPct = Math.round((payments.instapay / totalPaymentSum) * 100);
-  const visaPct = Math.round((payments.visa / totalPaymentSum) * 100);
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#090d16] text-gray-200 overflow-hidden text-right" dir="rtl">
@@ -615,7 +680,7 @@ export default function AdminPage() {
           <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-gray-500" />
             <span className="text-[10px] sm:text-xs text-gray-400 font-medium">
-              تاريخ اليوم: {new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              تاريخ اليوم: {todayLabel || '...'}
             </span>
           </div>
 
@@ -654,12 +719,72 @@ export default function AdminPage() {
                       <p className="text-3xl font-black text-white mt-2 text-right">EGP {kpis.monthlySales.toFixed(2)}</p>
                       <span className="text-[10px] text-purple-400 mt-2 block text-right">المبيعات التراكمية من أول الشهر</span>
                     </div>
-
                     <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
-                      <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">ربح تقديري اليوم</span>
-                      <p className="text-3xl font-black text-emerald-400 mt-2 text-right">EGP {kpis.estNetProfit.toFixed(2)}</p>
-                      <span className="text-[10px] text-emerald-400 mt-2 block text-right">حساب الربح التقديري بمتوسط هامش 65%</span>
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl"></div>
+                      <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">صرف ستاف اليوم</span>
+                      <p className="text-3xl font-black text-amber-400 mt-2 text-right">EGP {kpis.todayStaffConsumption.toFixed(2)}</p>
+                      <span className="text-[10px] text-amber-400 mt-2 block text-right">تخصم من المخزن ولا تدخل ضمن مبيعات العملاء</span>
+                    </div>
+
+                  </div>
+
+                  {/* Owner reports: all recorded days, months, and shifts */}
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                    <div className="glass-panel rounded-2xl p-5 text-right">
+                      <h3 className="font-bold text-sm text-white">المبيعات حسب اليوم</h3>
+                      <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
+                        {dailySales.length ? dailySales.map((day) => (
+                          <div key={day.period} className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-xs flex-row-reverse">
+                            <span className="text-gray-300">{new Date(`${day.period}T12:00:00`).toLocaleDateString('ar-EG')}</span>
+                            <span className="font-bold text-cyan-400">EGP {day.total.toFixed(2)} <span className="font-normal text-gray-500">({day.orders} فاتورة)</span></span>
+                          </div>
+                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد مبيعات مسجلة.</p>}
+                      </div>
+                    </div>
+
+                    <div className="glass-panel rounded-2xl p-5 text-right">
+                      <h3 className="font-bold text-sm text-white">المبيعات حسب الشهر</h3>
+                      <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
+                        {monthlySalesHistory.length ? monthlySalesHistory.map((month) => (
+                          <div key={month.period} className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-xs flex-row-reverse">
+                            <span className="text-gray-300">{new Date(`${month.period}-01T12:00:00`).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' })}</span>
+                            <span className="font-bold text-purple-400">EGP {month.total.toFixed(2)} <span className="font-normal text-gray-500">({month.orders} فاتورة)</span></span>
+                          </div>
+                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد مبيعات مسجلة.</p>}
+                      </div>
+                    </div>
+
+                    <div className="glass-panel rounded-2xl p-5 text-right">
+                      <h3 className="font-bold text-sm text-white">سجل الورديات</h3>
+                      <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
+                        {shiftSummaries.length ? shiftSummaries.map((shift) => (
+                          <div key={shift.id} className="rounded-lg bg-white/5 px-3 py-2 text-xs">
+                            <div className="flex justify-between flex-row-reverse">
+                              <span className="font-semibold text-white">{shift.cashierName}</span>
+                              <span className={shift.closedAt ? 'text-gray-400' : 'text-emerald-400'}>{shift.closedAt ? 'مقفلة' : 'مفتوحة'}</span>
+                            </div>
+                            <p className="mt-1 text-gray-400">{new Date(shift.openedAt).toLocaleString('ar-EG')}</p>
+                            <div className="mt-1 flex justify-between flex-row-reverse">
+                              <span className="text-gray-400">{shift.orderCount} فاتورة</span>
+                              <span className="font-bold text-cyan-400">EGP {shift.totalSales.toFixed(2)}</span>
+                            </div>
+                            <p className="mt-1 text-[10px] text-gray-500">كاش {shift.cashSales.toFixed(2)} · إنستا باي {shift.instaPaySales.toFixed(2)}</p>
+                            {shift.staffConsumption > 0 && <p className="mt-1 text-[10px] text-amber-400">صرف ستاف {shift.staffConsumption.toFixed(2)}</p>}
+                            {shift.closedAt && (
+                              <div className="mt-2 border-t border-white/5 pt-2 text-[10px]">
+                                <p className="text-gray-400">الدرج: متوقع EGP {shift.expectedCash.toFixed(2)} · فعلي EGP {(shift.closedCash || 0).toFixed(2)}</p>
+                                {shift.varianceCash < 0 ? (
+                                  <p className="mt-1 font-bold text-rose-400">عجز كاش: EGP {Math.abs(shift.varianceCash).toFixed(2)}</p>
+                                ) : shift.varianceCash > 0 ? (
+                                  <p className="mt-1 font-bold text-emerald-400">زيادة كاش: EGP {shift.varianceCash.toFixed(2)}</p>
+                                ) : (
+                                  <p className="mt-1 font-bold text-emerald-400">الكاش مطابق للتسوية</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد ورديات مسجلة.</p>}
+                      </div>
                     </div>
                   </div>
 
@@ -668,11 +793,28 @@ export default function AdminPage() {
                     
                     {/* Top Selling Items (Custom SVG Horizontal Bar Chart) */}
                     <div className="glass-panel rounded-2xl p-6 lg:col-span-2 space-y-4">
-                      <h3 className="font-bold text-sm text-white text-right">الأصناف الأكثر مبيعاً اليوم</h3>
+                      <div className="flex items-center justify-between gap-3 flex-row-reverse">
+                        <h3 className="font-bold text-sm text-white text-right">الأصناف الأكثر مبيعًا</h3>
+                        <div className="flex gap-1 rounded-lg bg-slate-900/70 p-1">
+                          {([
+                            ['today', 'اليوم'],
+                            ['month', 'الشهر'],
+                            ['all', 'كل الوقت'],
+                          ] as const).map(([period, label]) => (
+                            <button
+                              key={period}
+                              onClick={() => setTopItemsPeriod(period)}
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${topItemsPeriod === period ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       
                       <div className="space-y-4 pt-2">
-                        {topItems.length > 0 ? (
-                          topItems.map((item, idx) => {
+                        {displayedTopItems.length > 0 ? (
+                          displayedTopItems.map((item, idx) => {
                             const barPct = (item.total / maxItemTotal) * 100;
                             return (
                               <div key={idx} className="space-y-1.5">
@@ -690,7 +832,7 @@ export default function AdminPage() {
                             );
                           })
                         ) : (
-                          <p className="text-xs text-gray-500 italic py-6 text-center">مفيش مبيعات اتسجلت النهاردة لسه.</p>
+                          <p className="text-xs text-gray-500 italic py-6 text-center">لا توجد مبيعات في هذه الفترة.</p>
                         )}
                       </div>
                     </div>
@@ -757,15 +899,6 @@ export default function AdminPage() {
                               </div>
                             </div>
 
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-xs flex-row-reverse">
-                                <span className="text-emerald-400 font-semibold">فيزا / كروت البنك</span>
-                                <span className="font-bold text-white">EGP {payments.visa.toFixed(2)} ({visaPct}%)</span>
-                              </div>
-                              <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${visaPct}%` }}></div>
-                              </div>
-                            </div>
                           </>
                         ) : (
                           <p className="text-xs text-gray-500 italic py-6 text-center">لا توجد مبيعات لحساب النسب حالياً.</p>
@@ -795,13 +928,15 @@ export default function AdminPage() {
                                   <td className="py-3 font-mono text-cyan-400">{ord.receiptNumber || ord.id.slice(0, 8)}</td>
                                   <td className="py-3">{new Date(ord.createdAt).toLocaleTimeString()}</td>
                                   <td className="py-3">
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                      ord.orderType === 'DINE_IN' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-amber-500/10 text-amber-400'
-                                    }`}>
-                                      {ord.orderType === 'DINE_IN' ? `صالة (${ord.table?.name || 'طاولة'})` : 'تيك أواي'}
-                                    </span>
+                                    {ord.paymentMethod !== 'STAFF' && (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                        ord.orderType === 'DINE_IN' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-amber-500/10 text-amber-400'
+                                      }`}>
+                                        {ord.orderType === 'DINE_IN' ? `صالة (${ord.table?.name || 'طاولة'})` : 'تيك أواي'}
+                                      </span>
+                                    )}
                                   </td>
-                                  <td className="py-3 font-bold text-[10px] uppercase tracking-wider">{ord.paymentMethod === 'CASH' ? 'كاش' : ord.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'فيزا'}</td>
+                                  <td className="py-3 font-bold text-[10px] uppercase tracking-wider">{ord.paymentMethod === 'CASH' ? 'كاش' : ord.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'صرف ستاف'}</td>
                                   <td className="py-3 text-left font-bold text-white">EGP {ord.total.toFixed(2)}</td>
                                 </tr>
                               ))
@@ -871,6 +1006,7 @@ export default function AdminPage() {
                         <th className="p-4">وحدة الشراء</th>
                         <th className="p-4">وحدة الاستهلاك</th>
                         <th className="p-4">الحالة</th>
+                        <th className="p-4">العمليات</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -895,10 +1031,72 @@ export default function AdminPage() {
                               {mat.isLowStock ? 'ناقص / يحتاج توريد' : 'آمن وممتاز'}
                             </span>
                           </td>
+                          <td className="p-4">
+                            <div className="flex gap-2 flex-row-reverse">
+                              <button
+                                onClick={() => { setSelectedMaterialId(mat.id); setQtyInput(''); setShowRestock(true); }}
+                                className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded-lg text-[10px] font-bold transition-all"
+                              >
+                                توريد
+                              </button>
+                              <button
+                                onClick={() => { setSelectedMaterialId(mat.id); setQtyInput(''); setReasonInput(''); setShowWastage(true); }}
+                                className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap"
+                              >
+                                تسجيل هالك
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: WASTAGE LOGS */}
+          {activeTab === 'wastage' && (
+            <div className="space-y-6">
+              <div className="text-right">
+                <h2 className="text-xl font-bold text-white">هوالك وتوالف المخزن</h2>
+                <p className="text-xs text-gray-400 mt-1">كل كمية هالك تم تسجيلها من الكاشير أو الإدارة تظهر هنا.</p>
+              </div>
+
+              {loadingWastage ? (
+                <div className="h-64 flex items-center justify-center gap-2 text-sm text-gray-400">
+                  <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                  <span>جاري تحميل سجل الهوالك...</span>
+                </div>
+              ) : (
+                <div className="glass-panel rounded-2xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400">
+                          <th className="p-4">التاريخ والوقت</th>
+                          <th className="p-4">الخامة</th>
+                          <th className="p-4">الكمية</th>
+                          <th className="p-4">سبب الهالك</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {wastageLogs.length ? wastageLogs.map((log) => (
+                          <tr key={log.id} className="border-b border-white/5 text-gray-300 hover:bg-white/5">
+                            <td className="p-4 text-gray-400">{new Date(log.createdAt).toLocaleString('ar-EG')}</td>
+                            <td className="p-4 font-semibold text-white">{log.rawMaterial.name}</td>
+                            <td className="p-4 font-bold text-rose-400">{log.quantity} {log.rawMaterial.deductUnit}</td>
+                            <td className="p-4">{log.reason}</td>
+                          </tr>
+                        )) : (
+                          <tr>
+                            <td colSpan={4} className="p-10 text-center text-gray-500">لا توجد هوالك مسجلة حتى الآن.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -1008,7 +1206,7 @@ export default function AdminPage() {
                 </div>
               ) : (
                 // --- RECIPES LIST VIEWER ---
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 gap-6">
                   {/* Items Recipes */}
                   <div className="glass-panel rounded-2xl p-6 space-y-4">
                     <h3 className="font-bold text-sm text-white text-right pb-2 border-b border-white/5">وصفات أصناف المنيو</h3>
@@ -1031,45 +1229,20 @@ export default function AdminPage() {
                               )}
                             </p>
                           </div>
-                          <button
-                            onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
-                            className="px-2.5 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded-lg font-semibold transition-all shrink-0"
-                          >
-                            تعديل الوصفة
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Modifiers Recipes */}
-                  <div className="glass-panel rounded-2xl p-6 space-y-4">
-                    <h3 className="font-bold text-sm text-white text-right pb-2 border-b border-white/5">وصفات الإضافات (Modifiers)</h3>
-                    <div className="space-y-2.5 max-h-[500px] overflow-y-auto pl-1">
-                      {recipesModifiers.map((mod) => (
-                        <div key={mod.id} className="p-3.5 bg-slate-900/50 border border-white/5 rounded-xl flex items-center justify-between gap-4 text-xs flex-row-reverse">
-                          <div className="text-right">
-                            <h4 className="font-bold text-white text-sm">{mod.name}</h4>
-                            <p className="text-gray-500 mt-1">
-                              {mod.recipe.length > 0 ? (
-                                <span className="flex flex-wrap gap-1 mt-0.5 justify-start">
-                                  {mod.recipe.map((ing: any, i: number) => (
-                                    <span key={i} className="px-1.5 py-0.5 bg-white/5 rounded border border-white/5 text-[10px] text-gray-300">
-                                      {ing.rawMaterial.name} ({ing.quantity}{ing.rawMaterial.deductUnit})
-                                    </span>
-                                  ))}
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-amber-500">لا توجد وصفة للإضافة</span>
-                              )}
-                            </p>
+                          <div className="flex gap-2 shrink-0">
+                            <button
+                              onClick={() => handleAdminUpdateItemPrice(item)}
+                              className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg font-semibold transition-all"
+                            >
+                              السعر: EGP {item.price.toFixed(2)}
+                            </button>
+                            <button
+                              onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
+                              className="px-2.5 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded-lg font-semibold transition-all"
+                            >
+                              تعديل الوصفة
+                            </button>
                           </div>
-                          <button
-                            onClick={() => startEditRecipe({ type: 'modifier', id: mod.id, name: mod.name, recipe: mod.recipe })}
-                            className="px-2.5 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 rounded-lg font-semibold transition-all shrink-0"
-                          >
-                            تعديل الوصفة
-                          </button>
                         </div>
                       ))}
                     </div>

@@ -24,10 +24,11 @@ export async function GET() {
 // POST open a new shift
 export async function POST(request: Request) {
   try {
-    const { userId, floatCash } = await request.json();
+    const { userId, floatCash, cashierName } = await request.json();
+    const normalizedCashierName = typeof cashierName === 'string' ? cashierName.trim() : '';
 
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+    if (!userId || !normalizedCashierName) {
+      return NextResponse.json({ error: 'User ID and cashier name are required' }, { status: 400 });
     }
 
     // Check if there is already an active shift
@@ -42,19 +43,27 @@ export async function POST(request: Request) {
       );
     }
 
-    const newShift = await prisma.shift.create({
-      data: {
-        userId,
-        floatCash: parseFloat(floatCash) || 0,
-        expectedCash: parseFloat(floatCash) || 0,
-        expectedInstaPay: 0,
-        expectedVisa: 0,
-      },
+    const newShift = await prisma.$transaction(async (tx) => {
+      await tx.savedCashierName.upsert({
+        where: { name: normalizedCashierName },
+        create: { name: normalizedCashierName },
+        update: {},
+      });
+      return tx.shift.create({
+        data: {
+          userId,
+          cashierName: normalizedCashierName,
+          floatCash: parseFloat(floatCash) || 0,
+          expectedCash: parseFloat(floatCash) || 0,
+          expectedInstaPay: 0,
+          expectedVisa: 0,
+        },
       include: {
         user: {
           select: { id: true, name: true, username: true, role: true },
         },
       },
+      });
     });
 
     return NextResponse.json({ shift: newShift });

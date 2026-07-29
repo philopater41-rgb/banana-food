@@ -25,6 +25,7 @@ export async function GET() {
 
     // 3. Fetch halls with tables
     const halls = await prisma.hall.findMany({
+      where: { name: { not: 'Terrace (Outdoor)' } },
       include: {
         tables: {
           orderBy: { name: 'asc' },

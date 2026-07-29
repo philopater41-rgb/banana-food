@@ -58,6 +58,7 @@ model RawMaterial {
   purchaseUnit  String   // e.g., "kg", "liter", "box"
   deductUnit    String   // e.g., "g", "ml", "unit"
   conversionFactor Float @default(1.0) // 1 PurchaseUnit = X DeductUnits (e.g. 1kg = 1000g)
+  isActive      Boolean  @default(true)
   
   recipes       Recipe[]
   recipesMod    RecipeModifier[]
@@ -103,6 +104,7 @@ model Shift {
   id            String    @id @default(uuid())
   userId        String
   user          User      @relation(fields: [userId], references: [id])
+  cashierName   String?
   openedAt      DateTime  @default(now())
   closedAt      DateTime?
   
@@ -121,6 +123,12 @@ model Shift {
   
   orders        SalesOrder[]
   transactions  CashTransaction[]
+}
+
+model SavedCashierName {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
 }
 
 model CashTransaction {
@@ -142,7 +150,8 @@ model SalesOrder {
   tableId       String?
   table         Table?   @relation(fields: [tableId], references: [id])
   orderType     String   // "DINE_IN" | "TAKEAWAY"
-  paymentMethod String   // "CASH" | "INSTAPAY" | "VISA"
+  paymentMethod String   // "CASH" | "INSTAPAY" | "STAFF"
+  staffName     String?
   status        String   // "COMPLETED" | "CANCELLED"
   
   subtotal      Float

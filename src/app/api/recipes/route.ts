@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+const hiddenLegacyMaterialNames = [
+  'Almond Milk Pack',
+  'Chocolate Syrup',
+  'Espresso Coffee Beans',
+  'Frozen Croissant (Raw)',
+  'Full Cream Milk',
+  'White Sugar',
+];
+
 export async function GET() {
   try {
     const items = await prisma.item.findMany({
@@ -28,6 +37,7 @@ export async function GET() {
     });
 
     const rawMaterials = await prisma.rawMaterial.findMany({
+      where: { name: { notIn: hiddenLegacyMaterialNames } },
       orderBy: { name: 'asc' },
     });
 
