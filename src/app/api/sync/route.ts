@@ -21,8 +21,7 @@ interface SyncOrder {
   shiftId: string;
   tableId?: string | null;
   orderType: string; // "DINE_IN" | "TAKEAWAY"
-  paymentMethod: string; // "CASH" | "INSTAPAY" | "STAFF"
-  staffName?: string | null;
+  paymentMethod: string; // "CASH" | "INSTAPAY"
   status: string; // "COMPLETED" | "CANCELLED"
   subtotal: number;
   discount: number;
@@ -39,6 +38,9 @@ export async function POST(request: Request) {
 
     if (!orders || !Array.isArray(orders)) {
       return NextResponse.json({ error: 'Invalid orders array' }, { status: 400 });
+    }
+    if (orders.some((order) => !['CASH', 'INSTAPAY'].includes(order.paymentMethod))) {
+      return NextResponse.json({ error: 'Unsupported payment method' }, { status: 400 });
     }
 
     const syncedIds: string[] = [];
@@ -67,7 +69,6 @@ export async function POST(request: Request) {
               tableId: order.tableId || null,
               orderType: order.orderType,
               paymentMethod: order.paymentMethod,
-              staffName: order.staffName || null,
               status: order.status,
               subtotal: order.subtotal,
               discount: order.discount,

@@ -60,6 +60,102 @@ body {
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* Structured customer receipt, shared by preview and thermal print */
+.receipt-layout {
+  color: #000;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
+  font-weight: 700;
+}
+.receipt-layout * {
+  color: #000 !important;
+  font-weight: 700;
+}
+.receipt-brand {
+  border: 1px solid #000;
+  border-bottom: 0;
+  padding: 7px 4px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+}
+.receipt-logo {
+  display: block;
+  width: 62px;
+  height: 62px;
+  margin: -4px auto 0;
+  object-fit: contain;
+}
+.receipt-layout table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.receipt-layout th,
+.receipt-layout td {
+  border: 1px solid #000;
+  padding: 4px 3px;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.receipt-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #000;
+  border-top: 0;
+}
+.receipt-meta-cell,
+.receipt-meta-wide {
+  display: flex;
+  min-width: 0;
+  border-left: 1px solid #000;
+  border-top: 1px solid #000;
+}
+.receipt-meta-grid > :nth-child(2),
+.receipt-meta-grid > :nth-child(4) { border-left: 0; }
+.receipt-meta-wide {
+  grid-column: 1 / -1;
+  border-left: 0;
+}
+.receipt-meta-cell span,
+.receipt-meta-wide span {
+  flex: 0 0 auto;
+  padding: 4px 3px;
+  background: #f1f1f1;
+  border-left: 1px solid #000;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.receipt-meta-cell strong,
+.receipt-meta-wide strong {
+  min-width: 0;
+  flex: 1;
+  padding: 4px 3px;
+  text-align: center;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.receipt-number { direction: ltr; font-size: 10px; font-weight: 900; letter-spacing: -0.2px; white-space: nowrap; }
+.receipt-items-table { margin-top: 7px; }
+.receipt-items-table th { background: #f1f1f1; font-weight: 900; text-align: center; }
+.receipt-item-name { width: 46%; }
+.receipt-item-price { width: 18%; }
+.receipt-item-qty { width: 16%; }
+.receipt-item-total { width: 20%; }
+.receipt-items-table th:not(:first-child),
+.receipt-items-table td:not(:first-child) { text-align: center; direction: ltr; white-space: nowrap; }
+.receipt-items-table td:first-child { font-weight: 700; }
+.receipt-addition { display: block; margin-top: 2px; font-size: 9px; font-weight: 600; }
+.receipt-booking-name { font-weight: 900; }
+.receipt-totals-table { width: 55% !important; margin-top: 7px; margin-right: auto; }
+.receipt-totals-table th { width: 60%; background: #f1f1f1; font-weight: 900; }
+.receipt-totals-table td { text-align: center; font-weight: 700; }
+.receipt-discount { color: #b00020; }
+.receipt-final-total th,
+.receipt-final-total td { font-size: 12px; font-weight: 900; }
+.receipt-footer { margin-top: 8px; border-top: 1px solid #000; padding-top: 6px; text-align: center; font-weight: 900; }
+
 /* Print layout for receipts (KOT / Customer Invoice) */
 @media print {
   body {
@@ -67,6 +163,22 @@ body {
     color: black !important;
     font-family: 'Courier New', Courier, monospace !important;
     font-size: 12px !important;
+    font-weight: 600 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .print-area,
+  .print-area * {
+    color: #000 !important;
+    border-color: #000 !important;
+    opacity: 1 !important;
+  }
+  .print-area .font-bold,
+  .print-area .font-black {
+    font-weight: 900 !important;
+  }
+  .print-area .border-dashed {
+    border-color: #000 !important;
   }
   .no-print {
     display: none !important;
@@ -77,6 +189,14 @@ body {
     margin: 0 !important;
     padding: 0 !important;
   }
+  .print-area .receipt-layout { font-size: 10px !important; }
+  .print-area .receipt-brand { font-size: 12px !important; padding: 5px 3px !important; }
+  .print-area .receipt-logo { width: 54px !important; height: 54px !important; }
+  .print-area .receipt-layout th,
+  .print-area .receipt-layout td { padding: 3px 2px !important; }
+  .print-area .receipt-items-table { margin-top: 5px !important; }
+  .print-area .receipt-totals-table { margin-top: 5px !important; }
+  .print-area .receipt-footer { margin-top: 6px !important; padding-top: 5px !important; }
 }
 
 /* Micro-animations */

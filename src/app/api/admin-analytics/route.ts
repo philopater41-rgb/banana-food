@@ -11,7 +11,6 @@ export async function GET() {
     const todayOrders = await prisma.salesOrder.findMany({
       where: {
         status: 'COMPLETED',
-        paymentMethod: { not: 'STAFF' },
         createdAt: {
           gte: startOfToday,
         },
@@ -19,19 +18,14 @@ export async function GET() {
     });
 
     const todaySales = todayOrders.reduce((sum, order) => sum + order.total, 0);
-    const todayStaffOrders = await prisma.salesOrder.findMany({
-      where: { status: 'COMPLETED', paymentMethod: 'STAFF', createdAt: { gte: startOfToday } },
-    });
-    const todayStaffConsumption = todayStaffOrders.reduce((sum, order) => sum + order.total, 0);
     const todayRestock = await prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } });
-    const todayExpenses = (todayRestock._sum.amount || 0) + todayStaffConsumption;
+    const todayExpenses = todayRestock._sum.amount || 0;
     const todayNet = todaySales - todayExpenses;
 
     // 2. Calculate Monthly Sales
     const monthOrders = await prisma.salesOrder.findMany({
       where: {
         status: 'COMPLETED',
-        paymentMethod: { not: 'STAFF' },
         createdAt: {
           gte: startOfMonth,
         },
@@ -39,10 +33,8 @@ export async function GET() {
     });
 
     const monthlySales = monthOrders.reduce((sum, order) => sum + order.total, 0);
-    const monthlyStaffOrders = await prisma.salesOrder.findMany({ where: { status: 'COMPLETED', paymentMethod: 'STAFF', createdAt: { gte: startOfMonth } } });
-    const monthlyStaffConsumption = monthlyStaffOrders.reduce((sum, order) => sum + order.total, 0);
     const monthlyRestock = await prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfMonth } }, _sum: { amount: true } });
-    const monthlyExpenses = (monthlyRestock._sum.amount || 0) + monthlyStaffConsumption;
+    const monthlyExpenses = monthlyRestock._sum.amount || 0;
     const monthlyNet = monthlySales - monthlyExpenses;
 
     // 3. Active Shift Info
@@ -68,7 +60,6 @@ export async function GET() {
       where: {
         order: {
           status: 'COMPLETED',
-          paymentMethod: { not: 'STAFF' },
           createdAt: { gte: startOfToday },
         },
       },
@@ -105,11 +96,11 @@ export async function GET() {
     };
     const [monthOrderItems, allOrderItems] = await Promise.all([
       prisma.salesOrderItem.findMany({
-        where: { order: { status: 'COMPLETED', paymentMethod: { not: 'STAFF' }, createdAt: { gte: startOfMonth } } },
+        where: { order: { status: 'COMPLETED', createdAt: { gte: startOfMonth } } },
         include: { item: true },
       }),
       prisma.salesOrderItem.findMany({
-        where: { order: { status: 'COMPLETED', paymentMethod: { not: 'STAFF' } } },
+        where: { order: { status: 'COMPLETED' } },
         include: { item: true },
       }),
     ]);
@@ -150,7 +141,7 @@ export async function GET() {
 
     // 8. Historical summaries for the owner: every sales day, month, and shift.
     const historicalOrders = await prisma.salesOrder.findMany({
-      where: { status: 'COMPLETED', paymentMethod: { not: 'STAFF' } },
+      where: { status: 'COMPLETED' },
       select: { createdAt: true, total: true },
     });
     const cairoDateParts = new Intl.DateTimeFormat('en-CA', {
@@ -184,8 +175,7 @@ export async function GET() {
       },
     });
     const shiftSummaries = shifts.map((shift) => {
-      const completedOrders = shift.orders.filter((order) => order.status === 'COMPLETED' && order.paymentMethod !== 'STAFF');
-      const staffOrders = shift.orders.filter((order) => order.status === 'COMPLETED' && order.paymentMethod === 'STAFF');
+      const completedOrders = shift.orders.filter((order) => order.status === 'COMPLETED');
       return {
         id: shift.id,
         openedAt: shift.openedAt,
@@ -195,7 +185,6 @@ export async function GET() {
         totalSales: completedOrders.reduce((sum, order) => sum + order.total, 0),
         cashSales: completedOrders.filter((order) => order.paymentMethod === 'CASH').reduce((sum, order) => sum + order.total, 0),
         instaPaySales: completedOrders.filter((order) => order.paymentMethod === 'INSTAPAY').reduce((sum, order) => sum + order.total, 0),
-        staffConsumption: staffOrders.reduce((sum, order) => sum + order.total, 0),
         expectedCash: shift.expectedCash,
         expectedInstaPay: shift.expectedInstaPay,
         closedCash: shift.closedCash,
@@ -209,8 +198,6 @@ export async function GET() {
       kpis: {
         todaySales,
         monthlySales,
-        todayStaffConsumption,
-        monthlyStaffConsumption,
         todayExpenses,
         monthlyExpenses,
         todayNet,

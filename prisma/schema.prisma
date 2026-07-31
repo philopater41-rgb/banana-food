@@ -151,8 +151,7 @@ model SalesOrder {
   tableId       String?
   table         Table?   @relation(fields: [tableId], references: [id])
   orderType     String   // "DINE_IN" | "TAKEAWAY"
-  paymentMethod String   // "CASH" | "INSTAPAY" | "STAFF"
-  staffName     String?
+  paymentMethod String   // "CASH" | "INSTAPAY"
   status        String   // "COMPLETED" | "CANCELLED"
   
   subtotal      Float

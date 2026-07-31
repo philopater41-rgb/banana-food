@@ -32,3 +32,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'تعذر إضافة الصنف.' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const itemId = new URL(request.url).searchParams.get('id');
+    if (!itemId) return NextResponse.json({ error: 'معرّف الصنف مطلوب.' }, { status: 400 });
+
+    // Keep sales history intact: hide the item from the live POS instead of deleting it.
+    const item = await prisma.item.update({ where: { id: itemId }, data: { isActive: false } });
+    return NextResponse.json({ item });
+  } catch (error) {
+    console.error('Hide menu item error:', error);
+    return NextResponse.json({ error: 'تعذر حذف الصنف.' }, { status: 500 });
+  }
+}

@@ -67,7 +67,6 @@ export function useOfflineSync() {
         tableId: order.tableId,
         orderType: order.orderType,
         paymentMethod: order.paymentMethod,
-        staffName: order.staffName,
         status: order.status,
         subtotal: order.subtotal,
         discount: order.discount,

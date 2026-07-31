@@ -12,8 +12,6 @@ import {
 interface KPIState {
   todaySales: number;
   monthlySales: number;
-  todayStaffConsumption: number;
-  monthlyStaffConsumption: number;
   todayExpenses: number;
   monthlyExpenses: number;
   todayNet: number;
@@ -52,14 +50,6 @@ interface RawMaterial {
   isLowStock: boolean;
 }
 
-interface WastageLog {
-  id: string;
-  rawMaterial: { name: string; deductUnit: string };
-  quantity: number;
-  reason: string;
-  createdAt: string;
-}
-
 interface RecentOrder {
   id: string;
   receiptNumber?: string | null;
@@ -82,7 +72,6 @@ interface OrderDetails extends RecentOrder {
   discount: number;
   discountReason?: string | null;
   tax: number;
-  staffName?: string | null;
   items: Array<{
     id: string;
     qty: number;
@@ -112,7 +101,6 @@ interface ShiftSummary {
   totalSales: number;
   cashSales: number;
   instaPaySales: number;
-  staffConsumption: number;
   expectedCash: number;
   expectedInstaPay: number;
   closedCash: number | null;
@@ -126,7 +114,7 @@ export default function AdminPage() {
   const { user, logout } = useAppStore();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'wastage' | 'recipes'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes'>('dashboard');
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [todayLabel, setTodayLabel] = useState('');
 
@@ -134,8 +122,6 @@ export default function AdminPage() {
   const [kpis, setKpis] = useState<KPIState>({
     todaySales: 0,
     monthlySales: 0,
-    todayStaffConsumption: 0,
-    monthlyStaffConsumption: 0,
     todayExpenses: 0,
     monthlyExpenses: 0,
     todayNet: 0,
@@ -160,7 +146,6 @@ export default function AdminPage() {
   
   // Inventory list state
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
-  const [wastageLogs, setWastageLogs] = useState<WastageLog[]>([]);
   const [restockLogs, setRestockLogs] = useState<RestockLog[]>([]);
   const [monthlyRestockTotal, setMonthlyRestockTotal] = useState(0);
   const [todayAttendance, setTodayAttendance] = useState<AttendanceRecord[]>([]);
@@ -189,19 +174,19 @@ export default function AdminPage() {
 
   // Loading states
   const [loadingAnalytics, setLoadingAnalytics] = useState(true);
+  const [mounted, setMounted] = useState(false);
   const [loadingInventory, setLoadingInventory] = useState(false);
-  const [loadingWastage, setLoadingWastage] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
 
   // Modals
   const [showRestock, setShowRestock] = useState(false);
-  const [showWastage, setShowWastage] = useState(false);
   const [selectedMaterialId, setSelectedMaterialId] = useState('');
   const [qtyInput, setQtyInput] = useState('');
   const [restockAmount, setRestockAmount] = useState('');
-  const [reasonInput, setReasonInput] = useState('');
 
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => { setMounted(true); }, []);
 
   // Guard: Admin Check
   useEffect(() => {
@@ -276,21 +261,6 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Fetch Wastage Logs
-  const fetchWastage = useCallback(async () => {
-    setLoadingWastage(true);
-    try {
-      const res = await fetch('/api/inventory/wastage');
-      if (res.ok) {
-        const data = await res.json();
-        setWastageLogs(data.wastageLogs);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingWastage(false);
-    }
-  }, []);
   const fetchRestockLogs = useCallback(async () => {
     try {
       const res = await fetch('/api/inventory/restock');
@@ -344,13 +314,11 @@ export default function AdminPage() {
     } else if (activeTab === 'inventory') {
       fetchInventory();
       fetchRestockLogs();
-    } else if (activeTab === 'wastage') {
-      fetchWastage();
     } else if (activeTab === 'recipes') {
       fetchRecipes();
       fetchInventory();
     }
-  }, [activeTab, fetchAnalytics, fetchInventory, fetchWastage, fetchRecipes, fetchRestockLogs]);
+  }, [activeTab, fetchAnalytics, fetchInventory, fetchRecipes, fetchRestockLogs]);
 
   // Handle Restock Form POST
   const handleRestockSubmit = async (e: React.FormEvent) => {
@@ -380,38 +348,6 @@ export default function AdminPage() {
       fetchRestockLogs();
     } catch (err: any) {
       triggerAlert('error', err.message || 'خطأ في عملية التوريد');
-    } finally {
-      setSubmitLoading(false);
-    }
-  };
-
-  // Handle Wastage Form POST
-  const handleWastageSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedMaterialId || !qtyInput || !reasonInput) return;
-    setSubmitLoading(true);
-
-    try {
-      const res = await fetch('/api/inventory/wastage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawMaterialId: selectedMaterialId,
-          quantity: parseFloat(qtyInput),
-          reason: reasonInput,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشل تسجيل الهالك');
-
-      triggerAlert('success', 'تم تسجيل الهالك وخصمه من المخزن بنجاح.');
-      setShowWastage(false);
-      setQtyInput('');
-      setReasonInput('');
-      fetchInventory();
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في تسجيل الهالك');
     } finally {
       setSubmitLoading(false);
     }
@@ -544,6 +480,17 @@ export default function AdminPage() {
     }
   };
 
+  const handleRemoveMenuItem = async (item: { id: string; name: string }) => {
+    if (!window.confirm(`حذف ${item.name} من المنيو؟ لن يظهر في الكاشير، لكن الفواتير القديمة ستظل محفوظة.`)) return;
+    try {
+      const res = await fetch(`/api/items?id=${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setRecipesItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
+      triggerAlert('success', `تم حذف ${item.name} من المنيو.`);
+    } catch (error: any) { triggerAlert('error', error.message || 'تعذر حذف الصنف.'); }
+  };
+
   const handleUpdateStockAlertLevel = async (material: RawMaterial) => {
     const entered = window.prompt(`حد التنبيه الجديد لـ ${material.name} (${material.deductUnit})`, String(material.minStockLevel));
     if (entered === null) return;
@@ -604,6 +551,10 @@ export default function AdminPage() {
   const cashPct = Math.round((payments.cash / totalPaymentSum) * 100);
   const instapayPct = Math.round((payments.instapay / totalPaymentSum) * 100);
 
+  if (!mounted) {
+    return <div className="flex h-screen items-center justify-center bg-[#090d16] text-sm font-semibold text-gray-300" dir="rtl">جاري تحميل لوحة الإدارة...</div>;
+  }
+
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#090d16] text-gray-200 overflow-hidden text-right" dir="rtl">
       
@@ -622,8 +573,8 @@ export default function AdminPage() {
 
       {/* Mobile Drawer Sidebar Overlay */}
       {showMobileSidebar && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm md:hidden flex justify-end no-print">
-          <aside className="w-64 bg-[#0c1424] h-full p-6 flex flex-col justify-between border-r border-white/5 animate-slide-left text-right" dir="rtl">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm md:hidden flex justify-end no-print" onClick={() => setShowMobileSidebar(false)}>
+          <aside className="w-64 bg-[#0c1424] h-full p-6 flex flex-col justify-between border-r border-white/5 animate-slide-left text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <div className="space-y-8">
               <div className="flex items-center justify-between flex-row-reverse">
                 <button 
@@ -664,18 +615,6 @@ export default function AdminPage() {
                 >
                   <Package className="w-4 h-4 shrink-0" />
                   <span className="w-full text-right">مخزن الخامات والمواد</span>
-                </button>
-
-                <button
-                  onClick={() => { setActiveTab('wastage'); setShowMobileSidebar(false); }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
-                    activeTab === 'wastage'
-                      ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
-                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <Trash2 className="w-4 h-4 shrink-0" />
-                  <span className="w-full text-right">هوالك وتوالف المخزن</span>
                 </button>
 
                 <button
@@ -758,18 +697,6 @@ export default function AdminPage() {
             >
               <Package className="w-4 h-4 shrink-0" />
               <span className="w-full text-right">مخزن الخامات والمواد</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('wastage')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
-                activeTab === 'wastage'
-                  ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-white'
-              }`}
-            >
-              <Trash2 className="w-4 h-4 shrink-0" />
-              <span className="w-full text-right">هوالك وتوالف المخزن</span>
             </button>
 
             <button
@@ -862,23 +789,12 @@ export default function AdminPage() {
                     <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-2">
                       <span className="text-xs text-gray-400 font-semibold block text-right">مصروفات اليوم</span>
                       <p className="text-3xl font-black text-rose-400 mt-2 text-right">EGP {kpis.todayExpenses.toFixed(2)}</p>
-                      <span className="text-[10px] text-gray-500 mt-2 block text-right">توريد اليوم + صرف ستاف اليوم</span>
+                      <span className="text-[10px] text-gray-500 mt-2 block text-right">إجمالي توريدات اليوم</span>
                     </div>
                     <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-6">
                       <span className="text-xs text-gray-400 font-semibold block text-right">مصروفات الشهر الحالي</span>
                       <p className="text-3xl font-black text-rose-400 mt-2 text-right">EGP {kpis.monthlyExpenses.toFixed(2)}</p>
                       <span className="text-[10px] text-gray-500 mt-2 block text-right">توريد الشهر + صرف الستاف</span>
-                    </div>
-                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-3">
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl"></div>
-                      <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">صرف ستاف اليوم</span>
-                      <p className="text-3xl font-black text-amber-400 mt-2 text-right">EGP {kpis.todayStaffConsumption.toFixed(2)}</p>
-                      <span className="text-[10px] text-amber-400 mt-2 block text-right">تخصم من المخزن ولا تدخل ضمن مبيعات العملاء</span>
-                    </div>
-                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-7">
-                      <span className="text-xs text-gray-400 font-semibold block text-right">صرف ستاف الشهر</span>
-                      <p className="text-3xl font-black text-amber-400 mt-2 text-right">EGP {kpis.monthlyStaffConsumption.toFixed(2)}</p>
-                      <span className="text-[10px] text-amber-400 mt-2 block text-right">مُحتسب ضمن مصروفات الشهر</span>
                     </div>
                     <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-4">
                       <span className="text-xs text-gray-400 font-semibold block text-right">صافي اليوم</span>
@@ -957,7 +873,6 @@ export default function AdminPage() {
                               <span className="font-bold text-cyan-400">EGP {shift.totalSales.toFixed(2)}</span>
                             </div>
                             <p className="mt-1 text-[10px] text-gray-500">كاش {shift.cashSales.toFixed(2)} · إنستا باي {shift.instaPaySales.toFixed(2)}</p>
-                            {shift.staffConsumption > 0 && <p className="mt-1 text-[10px] text-amber-400">صرف ستاف {shift.staffConsumption.toFixed(2)}</p>}
                             {shift.closedAt && (
                               <div className="mt-2 border-t border-white/5 pt-2 text-[10px]">
                                 <p className="text-gray-400">الدرج: متوقع EGP {shift.expectedCash.toFixed(2)} · فعلي EGP {(shift.closedCash || 0).toFixed(2)}</p>
@@ -1119,15 +1034,13 @@ export default function AdminPage() {
                                   </td>
                                   <td className="py-3">{new Date(ord.createdAt).toLocaleTimeString()}</td>
                                   <td className="py-3">
-                                    {ord.paymentMethod !== 'STAFF' && (
-                                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                                         ord.orderType === 'DINE_IN' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-amber-500/10 text-amber-400'
                                       }`}>
                                         {ord.orderType === 'DINE_IN' ? `صالة (${ord.table?.name || 'طاولة'})` : 'تيك أواي'}
                                       </span>
-                                    )}
                                   </td>
-                                  <td className="py-3 font-bold text-[10px] uppercase tracking-wider">{ord.paymentMethod === 'CASH' ? 'كاش' : ord.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'صرف ستاف'}</td>
+                                  <td className="py-3 font-bold text-[10px] uppercase tracking-wider">{ord.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}</td>
                                   <td className="py-3 text-left font-bold text-white">EGP {ord.total.toFixed(2)}</td>
                                 </tr>
                               ))
@@ -1152,7 +1065,7 @@ export default function AdminPage() {
               <div className="flex items-center justify-between flex-row-reverse">
                 <div className="text-right">
                   <h2 className="text-xl font-bold text-white">مخزن وجرد الخامات</h2>
-                  <p className="text-xs text-gray-400 mt-1">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة أو الهوالك.</p>
+                  <p className="text-xs text-gray-400 mt-1">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة.</p>
                 </div>
                 <div className="flex gap-3 flex-row-reverse">
                   <button 
@@ -1163,14 +1076,6 @@ export default function AdminPage() {
                     <span>إضافة مادة خام جديدة</span>
                   </button>
 
-                  <button 
-                    onClick={() => { setSelectedMaterialId(materials[0]?.id || ''); setShowWastage(true); }}
-                    className="px-4 py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/20 text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-                  >
-                    <Trash2 className="w-4 h-4 shrink-0" />
-                    <span>تسجيل هالك خامات</span>
-                  </button>
-                  
                   <button 
                     onClick={() => { setSelectedMaterialId(materials[0]?.id || ''); setShowRestock(true); }}
                     className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
@@ -1243,12 +1148,6 @@ export default function AdminPage() {
                               >
                                 توريد
                               </button>
-                              <button
-                                onClick={() => { setSelectedMaterialId(mat.id); setQtyInput(''); setReasonInput(''); setShowWastage(true); }}
-                                className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap"
-                              >
-                                تسجيل هالك
-                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1266,53 +1165,7 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* TAB 3: WASTAGE LOGS */}
-          {activeTab === 'wastage' && (
-            <div className="space-y-6">
-              <div className="text-right">
-                <h2 className="text-xl font-bold text-white">هوالك وتوالف المخزن</h2>
-                <p className="text-xs text-gray-400 mt-1">كل كمية هالك تم تسجيلها من الكاشير أو الإدارة تظهر هنا.</p>
-              </div>
-
-              {loadingWastage ? (
-                <div className="h-64 flex items-center justify-center gap-2 text-sm text-gray-400">
-                  <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
-                  <span>جاري تحميل سجل الهوالك...</span>
-                </div>
-              ) : (
-                <div className="glass-panel rounded-2xl overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-right text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400">
-                          <th className="p-4">التاريخ والوقت</th>
-                          <th className="p-4">الخامة</th>
-                          <th className="p-4">الكمية</th>
-                          <th className="p-4">سبب الهالك</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {wastageLogs.length ? wastageLogs.map((log) => (
-                          <tr key={log.id} className="border-b border-white/5 text-gray-300 hover:bg-white/5">
-                            <td className="p-4 text-gray-400">{new Date(log.createdAt).toLocaleString('ar-EG')}</td>
-                            <td className="p-4 font-semibold text-white">{log.rawMaterial.name}</td>
-                            <td className="p-4 font-bold text-rose-400">{log.quantity} {log.rawMaterial.deductUnit}</td>
-                            <td className="p-4">{log.reason}</td>
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan={4} className="p-10 text-center text-gray-500">لا توجد هوالك مسجلة حتى الآن.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 4: RECIPES MANAGEMENT (BOM) */}
+          {/* TAB 3: RECIPES MANAGEMENT (BOM) */}
           {activeTab === 'recipes' && (
             <div className="space-y-6">
               <div className="flex items-center justify-between gap-4 flex-row-reverse">
@@ -1458,6 +1311,12 @@ export default function AdminPage() {
                             >
                               تعديل الوصفة
                             </button>
+                            <button
+                              onClick={() => handleRemoveMenuItem(item)}
+                              className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg font-semibold transition-all"
+                            >
+                              حذف
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -1472,7 +1331,7 @@ export default function AdminPage() {
       </main>
 
       {/* ======================================================== */}
-      {/* 3. Admin Modals (Restock, Wastage, Alerts) */}
+      {/* 3. Admin Modals (Restock, Alerts) */}
       {/* ======================================================== */}
 
       {/* Alert Banner */}
@@ -1489,8 +1348,8 @@ export default function AdminPage() {
 
       {/* ADD MENU ITEM DIALOG */}
       {showAddMenuItem && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowAddMenuItem(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button onClick={() => setShowAddMenuItem(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white" aria-label="إغلاق">
               <X className="w-5 h-5" />
             </button>
@@ -1544,9 +1403,8 @@ export default function AdminPage() {
                   <p className="font-mono text-sm text-cyan-400 mt-1">{selectedOrder.receiptNumber || selectedOrder.id.slice(0, 8)}</p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 text-xs">
                     <p className="text-gray-400">التاريخ: <span className="text-white">{new Date(selectedOrder.createdAt).toLocaleString('ar-EG')}</span></p>
-                    <p className="text-gray-400">الدفع: <span className="text-white">{selectedOrder.paymentMethod === 'CASH' ? 'كاش' : selectedOrder.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'صرف ستاف'}</span></p>
-                    {selectedOrder.paymentMethod !== 'STAFF' && <p className="text-gray-400">النوع: <span className="text-white">{selectedOrder.orderType === 'DINE_IN' ? `صالة - ${selectedOrder.table?.name || 'طاولة'}` : 'تيك أواي'}</span></p>}
-                    {selectedOrder.paymentMethod === 'STAFF' && selectedOrder.staffName && <p className="text-gray-400">اسم الستاف: <span className="text-white">{selectedOrder.staffName}</span></p>}
+                    <p className="text-gray-400">الدفع: <span className="text-white">{selectedOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}</span></p>
+                    <p className="text-gray-400">النوع: <span className="text-white">{selectedOrder.orderType === 'DINE_IN' ? `صالة - ${selectedOrder.table?.name || 'طاولة'}` : 'تيك أواي'}</span></p>
                   </div>
                 </div>
 
@@ -1582,8 +1440,8 @@ export default function AdminPage() {
 
       {/* RESTOCK DIALOG */}
       {showRestock && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowRestock(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowRestock(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -1639,77 +1497,10 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* WASTAGE LOG DIALOG */}
-      {showWastage && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
-            <button 
-              onClick={() => setShowWastage(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-xl font-bold text-white mb-2">تسجيل هالك خامات ومواد</h3>
-            <p className="text-xs text-gray-400 mb-6">اكتب كمية الهالك بوحدة الاستهلاك الصغرى (مثال: جرام، مل) مع توضيح سبب الهدر.</p>
-            
-            <form onSubmit={handleWastageSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-2">اختار الخامة المفقودة</label>
-                <select
-                  value={selectedMaterialId}
-                  onChange={(e) => setSelectedMaterialId(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500"
-                >
-                  {materials.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} (وحدة الاستهلاك: {m.deductUnit})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-2">الكمية التالفة (بوحدة الاستهلاك)</label>
-                <input
-                  type="number"
-                  required
-                  value={qtyInput}
-                  onChange={(e) => setQtyInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                  placeholder="مثال: 250"
-                  min="0"
-                  step="any"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-2">السبب أو البيان</label>
-                <input
-                  type="text"
-                  required
-                  value={reasonInput}
-                  onChange={(e) => setReasonInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                  placeholder="مثال: انسكاب أثناء عمل رغوة اللاتيه"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitLoading}
-                className="w-full py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-xl shadow-lg transition-all mt-2"
-              >
-                {submitLoading ? 'جاري تسجيل الحركة...' : 'تأكيد تسجيل الهدر'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* ADD NEW RAW MATERIAL MODAL */}
       {showAddMaterial && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowAddMaterial(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowAddMaterial(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"

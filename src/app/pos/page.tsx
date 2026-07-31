@@ -11,7 +11,7 @@ import {
   CheckCircle2, AlertCircle, X, PlusCircle, Printer, Menu, Package, Lock
 } from 'lucide-react';
 
-type PaymentMethod = 'CASH' | 'INSTAPAY' | 'STAFF';
+type PaymentMethod = 'CASH' | 'INSTAPAY';
 
 // Use native browser crypto - NOT the Node.js polyfill
 const generateUUID = (): string => {
@@ -91,10 +91,9 @@ export default function POSPage() {
   const [inventoryMaterials, setInventoryMaterials] = useState<any[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
   const [selectedMatId, setSelectedMatId] = useState('');
-  const [inventoryAction, setInventoryAction] = useState<'view' | 'restock' | 'wastage' | 'addMaterial' | 'recipes'>('view');
+  const [inventoryAction, setInventoryAction] = useState<'view' | 'restock' | 'addMaterial' | 'recipes'>('view');
   const [inventoryQty, setInventoryQty] = useState('');
   const [inventoryRestockAmount, setInventoryRestockAmount] = useState('');
-  const [inventoryReason, setInventoryReason] = useState('');
   const [submitInventoryLoading, setSubmitInventoryLoading] = useState(false);
 
   // Cashier recipe states
@@ -120,7 +119,6 @@ export default function POSPage() {
   const [discountVal, setDiscountVal] = useState('');
   const [discountReason, setDiscountReason] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
-  const [staffName, setStaffName] = useState('');
   
   // Receipt print state
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -477,10 +475,6 @@ export default function POSPage() {
       setShowOpenShift(true);
       return;
     }
-    if (paymentMethod === 'STAFF' && !staffName.trim()) {
-      triggerAlert('error', 'اكتب اسم الموظف الذي استلم الأصناف.');
-      return;
-    }
     if (cart.discount > 0 && !discountReason.trim()) {
       triggerAlert('error', 'اكتب سبب الخصم قبل إتمام الفاتورة.');
       return;
@@ -496,7 +490,6 @@ export default function POSPage() {
         tableId: cart.tableId,
         orderType: cart.orderType,
         paymentMethod: paymentMethod,
-        staffName: paymentMethod === 'STAFF' ? staffName.trim() : null,
         status: 'COMPLETED',
         subtotal: cart.subtotal,
         discount: cart.discount,
@@ -548,7 +541,6 @@ export default function POSPage() {
       });
       setDiscountVal('0');
       setDiscountReason('');
-      setStaffName('');
 
       // 4. Set receipt for print preview
       setReceiptOrder(newOrder);
@@ -962,37 +954,6 @@ export default function POSPage() {
     }
   };
 
-  const handlePOSWastageSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedMatId || !inventoryQty || !inventoryReason) return;
-    setSubmitInventoryLoading(true);
-
-    try {
-      const res = await fetch('/api/inventory/wastage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawMaterialId: selectedMatId,
-          quantity: parseFloat(inventoryQty),
-          reason: inventoryReason,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشل تسجيل الهالك');
-
-      triggerAlert('success', 'تم تسجيل الهالك وخصمه من المخزن بنجاح.');
-      setInventoryQty('');
-      setInventoryReason('');
-      setInventoryAction('view');
-      fetchPOSInventory();
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في تسجيل الهالك');
-    } finally {
-      setSubmitInventoryLoading(false);
-    }
-  };
-
   // 8. Expense Logging POST
   const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1032,6 +993,68 @@ export default function POSPage() {
   };
   const isBirthdayBookingReceipt = receiptOrder?.items.length === 1 &&
     items.find((item) => item.id === receiptOrder.items[0].itemId)?.name === 'حجز عيد ميلاد';
+
+  const ReceiptLayout = ({ preview = false }: { preview?: boolean }) => {
+    if (!receiptOrder) return null;
+
+    return (
+      <div className={`receipt-layout ${preview ? 'receipt-preview' : ''}`} dir="rtl">
+        <div className="receipt-brand">
+          <img src="/logo.jpg" alt="Day & Night" className="receipt-logo" />
+        </div>
+
+        <div className="receipt-meta-grid">
+          <div className="receipt-meta-wide"><span>رقم الفاتورة</span><strong className="receipt-number">{receiptOrder.receiptNumber}</strong></div>
+          <div className="receipt-meta-cell"><span>تاريخ</span><strong>{new Date(receiptOrder.createdAt).toLocaleDateString()}</strong></div>
+          <div className="receipt-meta-cell"><span>وقت</span><strong>{new Date(receiptOrder.createdAt).toLocaleTimeString()}</strong></div>
+          <div className="receipt-meta-cell"><span>الكاشير</span><strong>{activeShift?.cashierName || user?.name}</strong></div>
+          {!isBirthdayBookingReceipt && <div className="receipt-meta-cell"><span>النوع</span><strong>{receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</strong></div>}
+          {!isBirthdayBookingReceipt && <div className="receipt-meta-wide"><span>الترابيزة</span><strong>{receiptOrder.tableId ? (tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة') : '-'}</strong></div>}
+        </div>
+
+        <table className="receipt-items-table">
+          <colgroup><col className="receipt-item-name" /><col className="receipt-item-price" /><col className="receipt-item-qty" /><col className="receipt-item-total" /></colgroup>
+          <thead>
+            <tr><th>الصنف</th><th>سعر</th><th>الكمية</th><th>إجمالي</th></tr>
+          </thead>
+          <tbody>
+            {receiptOrder.items.map((item, idx) => {
+              const itDetails = items.find(i => i.id === item.itemId);
+              const isBirthdayBooking = itDetails?.name === 'حجز عيد ميلاد';
+              const additionsTotal = item.modifiers.reduce((sum, modifier) => sum + modifier.unitPriceImpact, 0);
+              const baseUnitPrice = item.unitPrice - additionsTotal;
+
+              if (isBirthdayBooking) {
+                return <tr key={idx}><td colSpan={3} className="receipt-booking-name">حجز عيد ميلاد</td><td>قيمة الحجز: {item.totalPrice.toFixed(2)}</td></tr>;
+              }
+
+              return (
+                <tr key={idx}>
+                  <td>{itDetails?.name || 'صنف'}{item.modifiers.length > 0 && <span className="receipt-addition">إضافة {additionsTotal.toFixed(2)}</span>}</td>
+                  <td>{baseUnitPrice.toFixed(2)}</td>
+                  <td>x{item.qty}</td>
+                  <td>{item.totalPrice.toFixed(2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <table className="receipt-totals-table">
+          <tbody>
+            <tr><th>الإجمالي:</th><td>{receiptOrder.subtotal.toFixed(2)}</td></tr>
+            {receiptOrder.discount > 0 && <tr className="receipt-discount"><th>الخصم:</th><td>-{receiptOrder.discount.toFixed(2)}</td></tr>}
+            <tr className="receipt-final-total"><th>الإجمالي النهائي:</th><td>{receiptOrder.total.toFixed(2)}</td></tr>
+          </tbody>
+        </table>
+
+        <div className="receipt-footer">
+          {`تم الدفع ${receiptOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}`}<br />
+          شكراً لزيارتكم!
+        </div>
+      </div>
+    );
+  };
 
   if (!mounted) {
     return (
@@ -1419,7 +1442,7 @@ export default function POSPage() {
               <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 block text-right">
                 طريقة الدفع
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('CASH')}
@@ -1445,30 +1468,7 @@ export default function POSPage() {
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>إنستا باي</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('STAFF')}
-                  className={`flex flex-col items-center gap-1 py-2 rounded-xl border text-xs font-semibold transition-all ${
-                    paymentMethod === 'STAFF'
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
-                      : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>صرف ستاف</span>
-                </button>
-
               </div>
-              {paymentMethod === 'STAFF' && (
-                <input
-                  type="text"
-                  required
-                  value={staffName}
-                  onChange={(e) => setStaffName(e.target.value)}
-                  className="w-full bg-slate-900 border border-amber-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 text-right"
-                  placeholder="اسم الموظف الذي استلم الأصناف"
-                />
-              )}
             </div>
 
             {/* Complete checkout button */}
@@ -1478,7 +1478,7 @@ export default function POSPage() {
               className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-600 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md shadow-cyan-500/10 active:scale-98 disabled:opacity-50 text-sm flex items-center justify-center gap-2 flex-row-reverse"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{paymentMethod === 'STAFF' ? `تسجيل صرف ستاف (EGP ${cart?.total.toFixed(2) || '0.00'})` : `تأكيد وتقفيل الحساب (EGP ${cart?.total.toFixed(2) || '0.00'})`}</span>
+              <span>{`تأكيد وتقفيل الحساب (EGP ${cart?.total.toFixed(2) || '0.00'})`}</span>
             </button>
           </div>
         </section>
@@ -1501,8 +1501,8 @@ export default function POSPage() {
       )}
 
       {showAttendanceModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowAttendanceModal(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button onClick={() => setShowAttendanceModal(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
             <h3 className="text-xl font-bold text-white mb-2">تسجيل حضور وانصراف</h3>
             <p className="text-xs text-gray-400 mb-5">اكتب اسم الموظف أو اختَره، والوقت يتسجل تلقائيًا.</p>
@@ -1518,8 +1518,8 @@ export default function POSPage() {
 
       {/* OPEN SHIFT DIALOG */}
       {showOpenShift && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowOpenShift(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowOpenShift(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -1645,10 +1645,6 @@ export default function POSPage() {
                       />
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي مبلغ التوريد (EGP)</label>
-                    <input type="number" required value={inventoryRestockAmount} onChange={(e) => setInventoryRestockAmount(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right" placeholder="مثال: 500" min="0" step="0.01" />
-                  </div>
                   <button
                     type="submit"
                     className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl shadow-lg transition-all"
@@ -1664,8 +1660,8 @@ export default function POSPage() {
 
       {/* CLOSE SHIFT DIALOG (SETTLEMENT) */}
       {showCloseShift && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-lg glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowCloseShift(false)}>
+          <div className="w-full max-w-lg glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowCloseShift(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -1728,8 +1724,8 @@ export default function POSPage() {
 
       {/* CASH OUT / EXPENSE MODAL */}
       {showExpenseModal && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowExpenseModal(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowExpenseModal(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -1778,8 +1774,8 @@ export default function POSPage() {
 
       {/* MODIFIERS SELECTION DIALOG */}
       {showModifiersModal && activeItemForMod && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowModifiersModal(false)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowModifiersModal(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -1830,8 +1826,8 @@ export default function POSPage() {
 
       {/* PAYMENT CONFIRMATION DIALOG */}
       {showPaymentConfirm && cart && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 text-right" dir="rtl">
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowPaymentConfirm(false)}>
+          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <h3 className="text-lg font-bold text-white">تأكيد الدفع</h3>
             <p className="text-xs text-gray-400 mt-2">راجع المبلغ وطريقة الدفع قبل تقفيل الفاتورة.</p>
             <div className="my-5 p-4 rounded-xl bg-white/5 border border-white/10 space-y-2">
@@ -1842,7 +1838,7 @@ export default function POSPage() {
               <div className="flex justify-between text-sm text-gray-300 flex-row-reverse">
                 <span>طريقة الدفع</span>
                 <span className="font-bold text-white">
-                  {paymentMethod === 'CASH' ? 'كاش' : paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'صرف ستاف'}
+                  {paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}
                 </span>
               </div>
             </div>
@@ -1868,8 +1864,8 @@ export default function POSPage() {
 
       {/* RECEIPT PRINTING PREVIEW MODAL */}
       {showPrintModal && receiptOrder && (
-        <div className="fixed inset-0 z-45 bg-black/85 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+        <div className="fixed inset-0 z-45 bg-black/85 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }}>
+          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -1883,79 +1879,8 @@ export default function POSPage() {
             <p className="text-xs text-gray-400 mb-6">معاينة ريسيت العميل. اضغط على زرار الطباعة للإخراج.</p>
             
             {/* Mini invoice representation */}
-            <div className="p-4 bg-white text-black font-mono text-[11px] rounded-lg shadow-inner max-h-[350px] overflow-y-auto leading-relaxed text-right" dir="rtl">
-              <div className="text-center font-bold text-xs uppercase tracking-wide border-b border-dashed border-gray-400 pb-2">
-                كافيه داي أند نايت (Day & Night)<br />
-                رقم الفاتورة: {receiptOrder.receiptNumber}
-              </div>
-              <div className="my-2 border-b border-dashed border-gray-400 pb-2 space-y-0.5">
-                <p>تاريخ: {new Date(receiptOrder.createdAt).toLocaleDateString()}</p>
-                <p>وقت: {new Date(receiptOrder.createdAt).toLocaleTimeString()}</p>
-                {!isBirthdayBookingReceipt && <>
-                  <p>النوع: {receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</p>
-                  {receiptOrder.tableId && (
-                    <p>الترابيزة: {tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة'}</p>
-                  )}
-                </>}
-                <p>الكاشير: {activeShift?.cashierName || user?.name}</p>
-              </div>
-
-              <div className="space-y-1 py-2 border-b border-dashed border-gray-400">
-                {receiptOrder.items.map((item, idx) => {
-                  const itDetails = items.find(i => i.id === item.itemId);
-                  const isBirthdayBooking = itDetails?.name === 'حجز عيد ميلاد';
-                  const additionsTotal = item.modifiers.reduce((sum, modifier) => sum + modifier.unitPriceImpact, 0);
-                  const baseUnitPrice = item.unitPrice - additionsTotal;
-                  return (
-                    <div key={idx} className="space-y-0.5">
-                      {isBirthdayBooking ? (
-                        <div className="flex justify-between flex-row-reverse">
-                          <span>حجز عيد ميلاد</span>
-                          <span>قيمة الحجز: EGP {item.totalPrice.toFixed(2)}</span>
-                        </div>
-                      ) : <>
-                        <div className="flex justify-between flex-row-reverse">
-                          <span>{itDetails?.name || 'صنف'} x{item.qty}</span>
-                        </div>
-                        {item.modifiers.length > 0 ? (
-                          <div className="grid grid-cols-3 gap-1 text-[9px] opacity-75 text-center" dir="rtl">
-                            <span className="whitespace-nowrap">إجمالي {item.totalPrice.toFixed(2)} EGP</span>
-                            <span className="whitespace-nowrap">إضافة {additionsTotal.toFixed(2)} EGP</span>
-                            <span className="whitespace-nowrap">سعر {baseUnitPrice.toFixed(2)} EGP</span>
-                          </div>
-                        ) : (
-                          <div className="flex justify-between text-[10px] opacity-75 flex-row-reverse">
-                            <span>سعر {baseUnitPrice.toFixed(2)} EGP</span>
-                            <span>إجمالي {item.totalPrice.toFixed(2)} EGP</span>
-                          </div>
-                        )}
-                      </>}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="my-2 space-y-1 text-left">
-                <div className="flex justify-between flex-row-reverse">
-                  <span>الإجمالي:</span>
-                  <span>EGP {receiptOrder.subtotal.toFixed(2)}</span>
-                </div>
-                {receiptOrder.discount > 0 && (
-                  <div className="flex justify-between text-red-600 flex-row-reverse">
-                    <span>الخصم:</span>
-                    <span>-EGP {receiptOrder.discount.toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between font-bold text-xs border-t border-dashed border-gray-400 pt-1 flex-row-reverse">
-                  <span>الإجمالي النهائي:</span>
-                  <span>EGP {receiptOrder.total.toFixed(2)}</span>
-                </div>
-              </div>
-
-              <div className="text-center font-bold uppercase mt-4 pt-2 border-t border-dashed border-gray-400">
-                {receiptOrder.paymentMethod === 'STAFF' ? `صرف ستاف: ${receiptOrder.staffName || 'غير مسجل'}` : `تم الدفع ${receiptOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}`}<br />
-                شكراً لزيارتكم!
-              </div>
+            <div className="p-3 bg-white text-black font-mono rounded-lg shadow-inner max-h-[350px] overflow-y-auto">
+              <ReceiptLayout preview />
             </div>
 
             <div className="grid grid-cols-2 gap-3 mt-6">
@@ -1982,86 +1907,15 @@ export default function POSPage() {
       {/* 4. Thermal receipt print-only view (Active when printing) */}
       {/* ======================================================== */}
       {receiptOrder && (
-        <div className="hidden print:block print-area font-mono text-[10px] text-black bg-white leading-relaxed text-right" dir="rtl">
-          <div className="text-center font-bold text-xs uppercase border-b border-dashed border-gray-500 pb-2">
-            كافيه داي أند نايت (Day & Night)<br />
-            رقم الفاتورة: {receiptOrder.receiptNumber}
-          </div>
-          <div className="my-2 border-b border-dashed border-gray-500 pb-1">
-            <p>تاريخ: {new Date(receiptOrder.createdAt).toLocaleDateString()}</p>
-            <p>وقت: {new Date(receiptOrder.createdAt).toLocaleTimeString()}</p>
-            {!isBirthdayBookingReceipt && <>
-              <p>النوع: {receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</p>
-              {receiptOrder.tableId && (
-                <p>الترابيزة: {tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة'}</p>
-              )}
-            </>}
-            <p>الكاشير: {activeShift?.cashierName || user?.name}</p>
-          </div>
-
-          <div className="space-y-1 py-1 border-b border-dashed border-gray-500">
-            {receiptOrder.items.map((item, idx) => {
-              const itDetails = items.find(i => i.id === item.itemId);
-              const isBirthdayBooking = itDetails?.name === 'حجز عيد ميلاد';
-              const additionsTotal = item.modifiers.reduce((sum, modifier) => sum + modifier.unitPriceImpact, 0);
-              const baseUnitPrice = item.unitPrice - additionsTotal;
-              return (
-                <div key={idx} className="space-y-0.5">
-                  {isBirthdayBooking ? (
-                    <div className="flex justify-between flex-row-reverse">
-                      <span>حجز عيد ميلاد</span>
-                      <span>قيمة الحجز: EGP {item.totalPrice.toFixed(2)}</span>
-                    </div>
-                  ) : <>
-                    <div className="flex justify-between flex-row-reverse">
-                      <span>{itDetails?.name || 'صنف'} x{item.qty}</span>
-                    </div>
-                    {item.modifiers.length > 0 ? (
-                      <div className="grid grid-cols-3 gap-1 text-[8px] opacity-75 text-center" dir="rtl">
-                        <span className="whitespace-nowrap">إجمالي {item.totalPrice.toFixed(2)} EGP</span>
-                        <span className="whitespace-nowrap">إضافة {additionsTotal.toFixed(2)} EGP</span>
-                        <span className="whitespace-nowrap">سعر {baseUnitPrice.toFixed(2)} EGP</span>
-                      </div>
-                    ) : (
-                      <div className="flex justify-between text-[9px] opacity-75 flex-row-reverse">
-                        <span>سعر {baseUnitPrice.toFixed(2)} EGP</span>
-                        <span>إجمالي {item.totalPrice.toFixed(2)} EGP</span>
-                      </div>
-                    )}
-                  </>}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="my-1.5 text-right space-y-0.5">
-            <div className="flex justify-between flex-row-reverse">
-              <span>الإجمالي:</span>
-              <span>EGP {receiptOrder.subtotal.toFixed(2)}</span>
-            </div>
-            {receiptOrder.discount > 0 && (
-              <div className="flex justify-between text-red-600 flex-row-reverse">
-                <span>الخصم:</span>
-                <span>-EGP {receiptOrder.discount.toFixed(2)}</span>
-              </div>
-            )}
-            <div className="flex justify-between font-bold border-t border-dashed border-gray-500 pt-0.5 flex-row-reverse">
-              <span>الإجمالي النهائي:</span>
-              <span>EGP {receiptOrder.total.toFixed(2)}</span>
-            </div>
-          </div>
-
-          <div className="text-center font-bold uppercase mt-4 pt-2 border-t border-dashed border-gray-500">
-            {receiptOrder.paymentMethod === 'STAFF' ? `صرف ستاف: ${receiptOrder.staffName || 'غير مسجل'}` : `تم الدفع ${receiptOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}`}<br />
-            شكراً لزيارتكم!
-          </div>
+        <div className="hidden print:block print-area font-mono text-black bg-white" dir="rtl">
+          <ReceiptLayout />
         </div>
       )}
 
       {/* CASHIER INVENTORY MODAL */}
       {showInventoryModal && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
-          <div className="w-full max-w-3xl glass-panel rounded-2xl p-6 relative text-right max-h-[85vh] overflow-y-auto" dir="rtl">
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowInventoryModal(false)}>
+          <div className="w-full max-w-3xl glass-panel rounded-2xl p-6 relative text-right max-h-[85vh] overflow-y-auto" dir="rtl" onClick={(event) => event.stopPropagation()}>
             <button 
               onClick={() => setShowInventoryModal(false)}
               className="absolute top-4 left-4 text-gray-400 hover:text-white"
@@ -2074,7 +1928,7 @@ export default function POSPage() {
               <button
                 onClick={() => setInventoryAction('view')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                  inventoryAction === 'view' || inventoryAction === 'restock' || inventoryAction === 'wastage'
+                  inventoryAction === 'view' || inventoryAction === 'restock'
                     ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
                     : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
                 }`}
@@ -2106,7 +1960,7 @@ export default function POSPage() {
             {inventoryAction === 'view' && (
               <>
                 <h3 className="text-lg font-bold text-white mb-1">مخزن وجرد الخامات</h3>
-                <p className="text-[11px] text-gray-400 mb-4">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة أو الهوالك.</p>
+                <p className="text-[11px] text-gray-400 mb-4">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة.</p>
                 
                 {loadingInventory ? (
                   <div className="flex items-center justify-center py-12 gap-2 text-sm text-gray-400">
@@ -2157,12 +2011,6 @@ export default function POSPage() {
                                 >
                                   توريد
                                 </button>
-                                <button
-                                  onClick={() => { setSelectedMatId(mat.id); setInventoryQty(''); setInventoryReason(''); setInventoryAction('wastage'); }}
-                                  className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-[10px] font-bold transition-all"
-                                >
-                                  تسجيل هالك
-                                </button>
                               </td>
                             </tr>
                           ))}
@@ -2200,6 +2048,20 @@ export default function POSPage() {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي مبلغ التوريد (EGP)</label>
+                    <input
+                      type="number"
+                      required
+                      value={inventoryRestockAmount}
+                      onChange={(e) => setInventoryRestockAmount(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right"
+                      placeholder="مثال: 500"
+                      min="0"
+                      step="0.01"
+                    />
+                  </div>
+
                   <div className="flex gap-3 justify-end pt-2">
                     <button
                       type="button"
@@ -2214,64 +2076,6 @@ export default function POSPage() {
                       className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white font-bold rounded-xl text-xs"
                     >
                       {submitInventoryLoading ? 'جاري التوريد...' : 'تأكيد إضافة الرصيد'}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-
-            {inventoryAction === 'wastage' && (
-              <>
-                <h3 className="text-xl font-bold text-white mb-2">تسجيل هالك خامات ومواد</h3>
-                <p className="text-xs text-gray-400 mb-6">
-                  الخامة: <span className="text-rose-400 font-bold">{inventoryMaterials.find(m => m.id === selectedMatId)?.name}</span>
-                  <br />
-                  اكتب كمية الهالك بوحدة الاستهلاك الصغرى (مثال: جرام، مل).
-                </p>
-                
-                <form onSubmit={handlePOSWastageSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">
-                      الكمية التالفة (بوحدة الاستهلاك: {inventoryMaterials.find(m => m.id === selectedMatId)?.deductUnit})
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      value={inventoryQty}
-                      onChange={(e) => setInventoryQty(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-rose-500 text-right"
-                      placeholder="مثال: 250"
-                      min="0"
-                      step="any"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">السبب أو البيان</label>
-                    <input
-                      type="text"
-                      required
-                      value={inventoryReason}
-                      onChange={(e) => setInventoryReason(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-rose-500 text-right"
-                      placeholder="مثال: انسكاب أثناء التحضير"
-                    />
-                  </div>
-
-                  <div className="flex gap-3 justify-end pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setInventoryAction('view')}
-                      className="px-4 py-2 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-xs"
-                    >
-                      رجوع
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={submitInventoryLoading}
-                      className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-xl text-xs"
-                    >
-                      {submitInventoryLoading ? 'جاري تسجيل الحركة...' : 'تأكيد تسجيل الهدر'}
                     </button>
                   </div>
                 </form>

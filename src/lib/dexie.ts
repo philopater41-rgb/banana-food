@@ -66,8 +66,7 @@ export interface LocalSalesOrder {
   shiftId: string;
   tableId: string | null;
   orderType: 'DINE_IN' | 'TAKEAWAY';
-  paymentMethod: 'CASH' | 'INSTAPAY' | 'STAFF';
-  staffName?: string | null;
+  paymentMethod: 'CASH' | 'INSTAPAY';
   status: 'COMPLETED' | 'CANCELLED';
   subtotal: number;
   discount: number;
