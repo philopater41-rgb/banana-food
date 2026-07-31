@@ -2119,7 +2119,7 @@ export default function POSPage() {
                       <span>اسحب الجدول يمينًا ويسارًا أو استخدم الأسهم</span>
                       <div className="flex gap-1" dir="ltr"><button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: -280, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">←</button><button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: 280, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">→</button></div>
                     </div>
-                    <div ref={inventoryTableScrollRef} className="w-full overflow-x-auto touch-pan-x overscroll-x-contain rounded-xl border border-white/5 max-h-[350px]" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x' }}>
+                    <div ref={inventoryTableScrollRef} className="w-full overflow-auto touch-auto overscroll-contain rounded-xl border border-white/5 max-h-[350px]" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'auto' }}>
                       <table className="min-w-[680px] text-right text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400 sticky top-0 z-10">

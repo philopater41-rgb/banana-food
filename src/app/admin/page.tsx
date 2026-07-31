@@ -1200,7 +1200,7 @@ export default function AdminPage() {
                       <button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: 300, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">→</button>
                     </div>
                   </div>
-                  <div ref={inventoryTableScrollRef} className="w-full overflow-x-auto touch-pan-x overscroll-x-contain rounded-xl border border-white/5" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x' }}>
+                  <div ref={inventoryTableScrollRef} className="w-full max-h-[55dvh] overflow-auto touch-auto overscroll-contain rounded-xl border border-white/5" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'auto' }}>
                   <table className="min-w-[900px] text-right text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400">
