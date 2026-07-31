@@ -71,6 +71,7 @@ export function useOfflineSync() {
         status: order.status,
         subtotal: order.subtotal,
         discount: order.discount,
+        discountReason: order.discountReason,
         tax: order.tax,
         total: order.total,
         createdAt: order.createdAt,

@@ -33,6 +33,17 @@ export async function GET() {
       },
       orderBy: { name: 'asc' },
     });
+    // خدمات ليست قائمة بيع عادية؛ تبقى آخر تبويب حتى مع إضافة أقسام جديدة.
+    categories.sort((a, b) => {
+      if (a.name === 'خدمات') return 1;
+      if (b.name === 'خدمات') return -1;
+      return a.name.localeCompare(b.name, 'ar');
+    });
+    for (const hall of halls) {
+      hall.tables.sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+      );
+    }
 
     return NextResponse.json({
       categories,

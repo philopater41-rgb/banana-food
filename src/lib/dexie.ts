@@ -71,6 +71,7 @@ export interface LocalSalesOrder {
   status: 'COMPLETED' | 'CANCELLED';
   subtotal: number;
   discount: number;
+  discountReason?: string | null;
   tax: number;
   total: number;
   createdAt: string;

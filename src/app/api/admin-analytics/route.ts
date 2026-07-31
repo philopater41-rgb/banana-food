@@ -23,6 +23,9 @@ export async function GET() {
       where: { status: 'COMPLETED', paymentMethod: 'STAFF', createdAt: { gte: startOfToday } },
     });
     const todayStaffConsumption = todayStaffOrders.reduce((sum, order) => sum + order.total, 0);
+    const todayRestock = await prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } });
+    const todayExpenses = (todayRestock._sum.amount || 0) + todayStaffConsumption;
+    const todayNet = todaySales - todayExpenses;
 
     // 2. Calculate Monthly Sales
     const monthOrders = await prisma.salesOrder.findMany({
@@ -36,6 +39,11 @@ export async function GET() {
     });
 
     const monthlySales = monthOrders.reduce((sum, order) => sum + order.total, 0);
+    const monthlyStaffOrders = await prisma.salesOrder.findMany({ where: { status: 'COMPLETED', paymentMethod: 'STAFF', createdAt: { gte: startOfMonth } } });
+    const monthlyStaffConsumption = monthlyStaffOrders.reduce((sum, order) => sum + order.total, 0);
+    const monthlyRestock = await prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfMonth } }, _sum: { amount: true } });
+    const monthlyExpenses = (monthlyRestock._sum.amount || 0) + monthlyStaffConsumption;
+    const monthlyNet = monthlySales - monthlyExpenses;
 
     // 3. Active Shift Info
     const activeShift = await prisma.shift.findFirst({
@@ -202,7 +210,12 @@ export async function GET() {
         todaySales,
         monthlySales,
         todayStaffConsumption,
-        activeShiftUser: activeShift ? activeShift.user.name : 'No Active Shift',
+        monthlyStaffConsumption,
+        todayExpenses,
+        monthlyExpenses,
+        todayNet,
+        monthlyNet,
+        activeShiftUser: activeShift ? (activeShift.cashierName || activeShift.user.name) : 'No Active Shift',
         activeShiftExpected: activeShift ? activeShift.expectedCash : 0,
       },
       paymentBreakdown: {

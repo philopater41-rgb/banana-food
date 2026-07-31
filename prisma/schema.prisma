@@ -63,6 +63,7 @@ model RawMaterial {
   recipes       Recipe[]
   recipesMod    RecipeModifier[]
   wastageLogs   WastageLog[]
+  restockLogs   RestockLog[]
 }
 
 model Recipe {
@@ -156,6 +157,7 @@ model SalesOrder {
   
   subtotal      Float
   discount      Float    @default(0.0)
+  discountReason String?
   tax           Float    @default(0.0)
   total         Float
   
@@ -192,6 +194,22 @@ model WastageLog {
   rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
   quantity      Float       // in deductUnit
   reason        String      // e.g., "Spillage", "Spoiled"
+  createdAt     DateTime    @default(now())
+}
+
+model AttendanceRecord {
+  id           String    @id @default(uuid())
+  employeeName String
+  checkedInAt  DateTime  @default(now())
+  checkedOutAt DateTime?
+}
+
+model RestockLog {
+  id            String      @id @default(uuid())
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  quantity      Float       // purchase unit
+  amount        Float       // EGP total paid for this supply
   createdAt     DateTime    @default(now())
 }
 

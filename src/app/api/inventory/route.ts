@@ -65,3 +65,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const { rawMaterialId, minStockLevel } = await request.json();
+    const level = Number(minStockLevel);
+    if (!rawMaterialId || !Number.isFinite(level) || level < 0) {
+      return NextResponse.json({ error: 'حد التنبيه يجب أن يكون صفرًا أو أكبر.' }, { status: 400 });
+    }
+    const rawMaterial = await prisma.rawMaterial.update({
+      where: { id: rawMaterialId },
+      data: { minStockLevel: level },
+    });
+    return NextResponse.json({ rawMaterial });
+  } catch (error) {
+    console.error('Update stock alert level error:', error);
+    return NextResponse.json({ error: 'تعذر تعديل حد التنبيه.' }, { status: 500 });
+  }
+}

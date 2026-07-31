@@ -13,6 +13,11 @@ interface KPIState {
   todaySales: number;
   monthlySales: number;
   todayStaffConsumption: number;
+  monthlyStaffConsumption: number;
+  todayExpenses: number;
+  monthlyExpenses: number;
+  todayNet: number;
+  monthlyNet: number;
   activeShiftUser: string;
   activeShiftExpected: number;
 }
@@ -62,8 +67,34 @@ interface RecentOrder {
   paymentMethod: string;
   status: string;
   total: number;
+  discount: number;
   createdAt: string;
   table?: { name: string } | null;
+}
+interface RestockLog {
+  id: string; quantity: number; amount: number; createdAt: string;
+  rawMaterial: { name: string; purchaseUnit: string };
+}
+interface AttendanceRecord { id: string; employeeName: string; checkedInAt: string; checkedOutAt: string | null; }
+
+interface OrderDetails extends RecentOrder {
+  subtotal: number;
+  discount: number;
+  discountReason?: string | null;
+  tax: number;
+  staffName?: string | null;
+  items: Array<{
+    id: string;
+    qty: number;
+    unitPrice: number;
+    totalPrice: number;
+    item: { name: string };
+    modifiers: Array<{
+      id: string;
+      unitPriceImpact: number;
+      modifier: { name: string };
+    }>;
+  }>;
 }
 
 interface SalesSummary {
@@ -104,6 +135,11 @@ export default function AdminPage() {
     todaySales: 0,
     monthlySales: 0,
     todayStaffConsumption: 0,
+    monthlyStaffConsumption: 0,
+    todayExpenses: 0,
+    monthlyExpenses: 0,
+    todayNet: 0,
+    monthlyNet: 0,
     activeShiftUser: 'Loading...',
     activeShiftExpected: 0
   });
@@ -114,6 +150,9 @@ export default function AdminPage() {
   const [topItemsPeriod, setTopItemsPeriod] = useState<'today' | 'month' | 'all'>('today');
   const [lowStock, setLowStock] = useState<LowStock[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<OrderDetails | null>(null);
+  const [showOrderDetails, setShowOrderDetails] = useState(false);
+  const [loadingOrderDetails, setLoadingOrderDetails] = useState(false);
   const [dailySales, setDailySales] = useState<SalesSummary[]>([]);
   const [monthlySalesHistory, setMonthlySalesHistory] = useState<SalesSummary[]>([]);
   const [shiftSummaries, setShiftSummaries] = useState<ShiftSummary[]>([]);
@@ -121,6 +160,10 @@ export default function AdminPage() {
   // Inventory list state
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [wastageLogs, setWastageLogs] = useState<WastageLog[]>([]);
+  const [restockLogs, setRestockLogs] = useState<RestockLog[]>([]);
+  const [monthlyRestockTotal, setMonthlyRestockTotal] = useState(0);
+  const [todayAttendance, setTodayAttendance] = useState<AttendanceRecord[]>([]);
+  const [monthlyAttendance, setMonthlyAttendance] = useState<AttendanceRecord[]>([]);
   
   // Recipes tab states
   const [recipesItems, setRecipesItems] = useState<any[]>([]);
@@ -129,6 +172,7 @@ export default function AdminPage() {
   const [recipeIngredients, setRecipeIngredients] = useState<Array<{ rawMaterialId: string; quantity: number }>>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
+  const [showAddMenuItem, setShowAddMenuItem] = useState(false);
 
   // New Material inputs
   const [newMatName, setNewMatName] = useState('');
@@ -137,6 +181,10 @@ export default function AdminPage() {
   const [newMatPurchaseUnit, setNewMatPurchaseUnit] = useState('');
   const [newMatDeductUnit, setNewMatDeductUnit] = useState('');
   const [newMatConvFactor, setNewMatConvFactor] = useState('');
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemPrice, setNewItemPrice] = useState('');
+  const [newItemCategory, setNewItemCategory] = useState('');
+  const [newItemNewCategory, setNewItemNewCategory] = useState('');
 
   // Loading states
   const [loadingAnalytics, setLoadingAnalytics] = useState(true);
@@ -149,6 +197,7 @@ export default function AdminPage() {
   const [showWastage, setShowWastage] = useState(false);
   const [selectedMaterialId, setSelectedMaterialId] = useState('');
   const [qtyInput, setQtyInput] = useState('');
+  const [restockAmount, setRestockAmount] = useState('');
   const [reasonInput, setReasonInput] = useState('');
 
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -194,6 +243,12 @@ export default function AdminPage() {
         setDailySales(data.dailySales);
         setMonthlySalesHistory(data.monthlySalesHistory);
         setShiftSummaries(data.shiftSummaries);
+        const attendanceRes = await fetch('/api/attendance');
+        if (attendanceRes.ok) {
+          const attendance = await attendanceRes.json();
+          setTodayAttendance(attendance.todayRecords || []);
+          setMonthlyAttendance(attendance.monthlyRecords || []);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -235,6 +290,33 @@ export default function AdminPage() {
       setLoadingWastage(false);
     }
   }, []);
+  const fetchRestockLogs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/inventory/restock');
+      if (!res.ok) return;
+      const data = await res.json();
+      setRestockLogs(data.logs || []);
+      setMonthlyRestockTotal(data.monthlyTotal || 0);
+    } catch (error) { console.error(error); }
+  }, []);
+
+  const openOrderDetails = async (orderId: string) => {
+    setShowOrderDetails(true);
+    setSelectedOrder(null);
+    setLoadingOrderDetails(true);
+
+    try {
+      const res = await fetch(`/api/sales-orders/${orderId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشل تحميل تفاصيل الفاتورة');
+      setSelectedOrder(data.order);
+    } catch (error: any) {
+      setShowOrderDetails(false);
+      triggerAlert('error', error.message || 'فشل تحميل تفاصيل الفاتورة');
+    } finally {
+      setLoadingOrderDetails(false);
+    }
+  };
 
   // Fetch Recipes
   const fetchRecipes = useCallback(async () => {
@@ -260,18 +342,19 @@ export default function AdminPage() {
       fetchAnalytics();
     } else if (activeTab === 'inventory') {
       fetchInventory();
+      fetchRestockLogs();
     } else if (activeTab === 'wastage') {
       fetchWastage();
     } else if (activeTab === 'recipes') {
       fetchRecipes();
       fetchInventory();
     }
-  }, [activeTab, fetchAnalytics, fetchInventory, fetchWastage, fetchRecipes]);
+  }, [activeTab, fetchAnalytics, fetchInventory, fetchWastage, fetchRecipes, fetchRestockLogs]);
 
   // Handle Restock Form POST
   const handleRestockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedMaterialId || !qtyInput) return;
+    if (!selectedMaterialId || !qtyInput || restockAmount === '') return;
     setSubmitLoading(true);
 
     try {
@@ -281,6 +364,7 @@ export default function AdminPage() {
         body: JSON.stringify({
           rawMaterialId: selectedMaterialId,
           quantity: parseFloat(qtyInput),
+          amount: parseFloat(restockAmount),
         }),
       });
 
@@ -290,7 +374,9 @@ export default function AdminPage() {
       triggerAlert('success', 'تم شحن وتوريد الخامة للمخزن بنجاح.');
       setShowRestock(false);
       setQtyInput('');
+      setRestockAmount('');
       fetchInventory();
+      fetchRestockLogs();
     } catch (err: any) {
       triggerAlert('error', err.message || 'خطأ في عملية التوريد');
     } finally {
@@ -454,6 +540,59 @@ export default function AdminPage() {
       triggerAlert('success', `تم تعديل سعر ${item.name} إلى EGP ${price.toFixed(2)}`);
     } catch {
       triggerAlert('error', 'تعذر تعديل سعر الصنف.');
+    }
+  };
+
+  const handleUpdateStockAlertLevel = async (material: RawMaterial) => {
+    const entered = window.prompt(`حد التنبيه الجديد لـ ${material.name} (${material.deductUnit})`, String(material.minStockLevel));
+    if (entered === null) return;
+    const minStockLevel = Number(entered);
+    if (!Number.isFinite(minStockLevel) || minStockLevel < 0) {
+      triggerAlert('error', 'اكتب حد تنبيه صحيحًا صفر أو أكبر.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/inventory', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawMaterialId: material.id, minStockLevel }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMaterials((current) => current.map((item) => item.id === material.id ? { ...item, minStockLevel, isLowStock: item.stockQty < minStockLevel } : item));
+      triggerAlert('success', 'تم تعديل حد التنبيه.');
+    } catch (error: any) { triggerAlert('error', error.message || 'تعذر تعديل حد التنبيه.'); }
+  };
+
+  const openAddMenuItem = () => {
+    const firstCategory = recipesItems[0]?.category?.name || '';
+    setNewItemName('');
+    setNewItemPrice('');
+    setNewItemCategory(firstCategory);
+    setNewItemNewCategory('');
+    setShowAddMenuItem(true);
+  };
+
+  const handleAddMenuItemSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const categoryName = newItemNewCategory.trim() || newItemCategory;
+    const price = Number(newItemPrice);
+    if (!newItemName.trim() || !categoryName || !Number.isFinite(price) || price < 0) {
+      triggerAlert('error', 'اكتب اسم الصنف والقسم والسعر الصحيح.');
+      return;
+    }
+    setSubmitLoading(true);
+    try {
+      const res = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newItemName, price, categoryName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setRecipesItems((current) => [...current, data.item].sort((a, b) => a.name.localeCompare(b.name, 'ar')));
+      setShowAddMenuItem(false);
+      triggerAlert('success', `تمت إضافة ${data.item.name} بدون وصفة مخزون.`);
+    } catch (error: any) {
+      triggerAlert('error', error.message || 'تعذر إضافة الصنف.');
+    } finally {
+      setSubmitLoading(false);
     }
   };
 
@@ -705,27 +844,75 @@ export default function AdminPage() {
               ) : (
                 <>
                   {/* KPI Cards Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-1">
                       <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl"></div>
                       <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">إجمالي مبيعات اليوم</span>
                       <p className="text-3xl font-black text-white mt-2 text-right">EGP {kpis.todaySales.toFixed(2)}</p>
                       <span className="text-[10px] text-cyan-400 mt-2 block text-right">إيراد درج الكاشير والطلبات اليوم</span>
                     </div>
 
-                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-5">
                       <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl"></div>
                       <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">مبيعات الشهر الحالي</span>
                       <p className="text-3xl font-black text-white mt-2 text-right">EGP {kpis.monthlySales.toFixed(2)}</p>
                       <span className="text-[10px] text-purple-400 mt-2 block text-right">المبيعات التراكمية من أول الشهر</span>
                     </div>
-                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-2">
+                      <span className="text-xs text-gray-400 font-semibold block text-right">مصروفات اليوم</span>
+                      <p className="text-3xl font-black text-rose-400 mt-2 text-right">EGP {kpis.todayExpenses.toFixed(2)}</p>
+                      <span className="text-[10px] text-gray-500 mt-2 block text-right">توريد اليوم + صرف ستاف اليوم</span>
+                    </div>
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-6">
+                      <span className="text-xs text-gray-400 font-semibold block text-right">مصروفات الشهر الحالي</span>
+                      <p className="text-3xl font-black text-rose-400 mt-2 text-right">EGP {kpis.monthlyExpenses.toFixed(2)}</p>
+                      <span className="text-[10px] text-gray-500 mt-2 block text-right">توريد الشهر + صرف الستاف</span>
+                    </div>
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-3">
                       <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl"></div>
                       <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block text-right">صرف ستاف اليوم</span>
                       <p className="text-3xl font-black text-amber-400 mt-2 text-right">EGP {kpis.todayStaffConsumption.toFixed(2)}</p>
                       <span className="text-[10px] text-amber-400 mt-2 block text-right">تخصم من المخزن ولا تدخل ضمن مبيعات العملاء</span>
                     </div>
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-7">
+                      <span className="text-xs text-gray-400 font-semibold block text-right">صرف ستاف الشهر</span>
+                      <p className="text-3xl font-black text-amber-400 mt-2 text-right">EGP {kpis.monthlyStaffConsumption.toFixed(2)}</p>
+                      <span className="text-[10px] text-amber-400 mt-2 block text-right">مُحتسب ضمن مصروفات الشهر</span>
+                    </div>
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-4">
+                      <span className="text-xs text-gray-400 font-semibold block text-right">صافي اليوم</span>
+                      <p className={`text-3xl font-black mt-2 text-right ${kpis.todayNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>EGP {kpis.todayNet.toFixed(2)}</p>
+                      <span className="text-[10px] text-gray-500 mt-2 block text-right">مبيعات اليوم − مصروفات اليوم</span>
+                    </div>
+                    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden order-8">
+                      <span className="text-xs text-gray-400 font-semibold block text-right">صافي الشهر</span>
+                      <p className={`text-3xl font-black mt-2 text-right ${kpis.monthlyNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>EGP {kpis.monthlyNet.toFixed(2)}</p>
+                      <span className="text-[10px] text-gray-500 mt-2 block text-right">مبيعات الشهر − مصروفات الشهر</span>
+                    </div>
 
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    {[
+                      ['سجل حضور اليوم', todayAttendance],
+                      ['سجل حضور الشهر الحالي', monthlyAttendance],
+                    ].map(([title, records]) => (
+                      <div key={title as string} className="glass-panel rounded-2xl p-5 text-right">
+                        <h3 className="font-bold text-sm text-white">{title as string}</h3>
+                        <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
+                          {(records as AttendanceRecord[]).length ? (records as AttendanceRecord[]).map((record) => {
+                            const checkIn = new Date(record.checkedInAt);
+                            const checkOut = record.checkedOutAt ? new Date(record.checkedOutAt) : null;
+                            const hours = checkOut ? ((checkOut.getTime() - checkIn.getTime()) / 3600000).toFixed(2) : null;
+                            return <div key={record.id} className="rounded-lg bg-white/5 px-3 py-2 text-xs">
+                              <div className="flex justify-between flex-row-reverse"><span className="font-bold text-white">{record.employeeName}</span><span className={checkOut ? 'text-emerald-400' : 'text-amber-400'}>{checkOut ? `${hours} ساعة` : 'حاضر الآن'}</span></div>
+                              <p className="mt-1 text-gray-400">حضور: {checkIn.toLocaleString('ar-EG')}</p>
+                              <p className="mt-1 text-gray-400">انصراف: {checkOut ? checkOut.toLocaleString('ar-EG') : 'لم يسجل انصرافًا بعد'}</p>
+                            </div>;
+                          }) : <p className="py-6 text-center text-xs text-gray-500">لا توجد تسجيلات حضور.</p>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
 
                   {/* Owner reports: all recorded days, months, and shifts */}
@@ -924,8 +1111,11 @@ export default function AdminPage() {
                           <tbody>
                             {recentOrders.length > 0 ? (
                               recentOrders.map((ord) => (
-                                <tr key={ord.id} className="border-b border-white/5 text-gray-300">
-                                  <td className="py-3 font-mono text-cyan-400">{ord.receiptNumber || ord.id.slice(0, 8)}</td>
+                                <tr key={ord.id} onClick={() => openOrderDetails(ord.id)} className="border-b border-white/5 text-gray-300 cursor-pointer hover:bg-cyan-500/5 transition-colors">
+                                  <td className="py-3">
+                                    <p className="font-mono text-cyan-400 underline underline-offset-4 decoration-cyan-400/40">{ord.receiptNumber || ord.id.slice(0, 8)}</p>
+                                    {ord.discount > 0 && <p className="mt-1 text-[10px] font-bold text-rose-300">خصم: EGP {ord.discount.toFixed(2)}</p>}
+                                  </td>
                                   <td className="py-3">{new Date(ord.createdAt).toLocaleTimeString()}</td>
                                   <td className="py-3">
                                     {ord.paymentMethod !== 'STAFF' && (
@@ -996,6 +1186,11 @@ export default function AdminPage() {
                   <span>جاري تحميل بيانات وجرد المخزن...</span>
                 </div>
               ) : (
+                <>
+                <div className="glass-panel rounded-2xl p-4 flex items-center justify-between flex-row-reverse">
+                  <div><p className="text-xs text-gray-400">مصروفات التوريد هذا الشهر</p><p className="text-2xl font-bold text-amber-400 mt-1">EGP {monthlyRestockTotal.toFixed(2)}</p></div>
+                  <span className="text-xs text-gray-500">يشمل كل التوريدات المسجلة</span>
+                </div>
                 <div className="glass-panel rounded-2xl overflow-hidden">
                   <table className="w-full text-right text-xs border-collapse">
                     <thead>
@@ -1019,7 +1214,7 @@ export default function AdminPage() {
                               (~{(mat.stockQty / mat.conversionFactor).toFixed(2)} {mat.purchaseUnit})
                             </span>
                           </td>
-                          <td className="p-4 text-gray-400">{mat.minStockLevel} {mat.deductUnit}</td>
+                          <td className="p-4"><button onClick={() => handleUpdateStockAlertLevel(mat)} className="text-gray-300 hover:text-cyan-400 underline decoration-dotted underline-offset-4">{mat.minStockLevel} {mat.deductUnit}</button></td>
                           <td className="p-4 text-gray-500 uppercase tracking-wider">{mat.purchaseUnit}</td>
                           <td className="p-4 text-gray-500 uppercase tracking-wider">{mat.deductUnit}</td>
                           <td className="p-4">
@@ -1052,6 +1247,11 @@ export default function AdminPage() {
                     </tbody>
                   </table>
                 </div>
+                <div className="glass-panel rounded-2xl overflow-hidden">
+                  <div className="p-4 border-b border-white/5 font-bold text-sm text-white">سجل التوريدات</div>
+                  <div className="max-h-64 overflow-y-auto"><table className="w-full text-right text-xs"><thead><tr className="text-gray-500 border-b border-white/5"><th className="p-3">التاريخ والوقت</th><th className="p-3">الخامة</th><th className="p-3">الكمية</th><th className="p-3">المبلغ</th></tr></thead><tbody>{restockLogs.length ? restockLogs.map((log) => <tr key={log.id} className="border-b border-white/5 text-gray-300"><td className="p-3">{new Date(log.createdAt).toLocaleString('ar-EG')}</td><td className="p-3 font-semibold text-white">{log.rawMaterial.name}</td><td className="p-3">{log.quantity} {log.rawMaterial.purchaseUnit}</td><td className="p-3 font-bold text-amber-400">EGP {log.amount.toFixed(2)}</td></tr>) : <tr><td colSpan={4} className="p-6 text-center text-gray-500">لا توجد توريدات مسجلة بعد.</td></tr>}</tbody></table></div>
+                </div>
+                </>
               )}
             </div>
           )}
@@ -1105,9 +1305,15 @@ export default function AdminPage() {
           {/* TAB 4: RECIPES MANAGEMENT (BOM) */}
           {activeTab === 'recipes' && (
             <div className="space-y-6">
-              <div className="text-right">
-                <h2 className="text-xl font-bold text-white">إدارة وصفات ومكونات الأصناف (BOM)</h2>
-                <p className="text-xs text-gray-400 mt-1">حدد المكونات والخامات التي يستهلكها كل صنف أو إضافة ليتم خصمها تلقائياً من المخزن فور البيع.</p>
+              <div className="flex items-center justify-between gap-4 flex-row-reverse">
+                <div className="text-right">
+                  <h2 className="text-xl font-bold text-white">إدارة وصفات ومكونات الأصناف (BOM)</h2>
+                  <p className="text-xs text-gray-400 mt-1">حدد المكونات والخامات التي يستهلكها كل صنف أو إضافة ليتم خصمها تلقائياً من المخزن فور البيع.</p>
+                </div>
+                <button onClick={openAddMenuItem} className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0">
+                  <PlusCircle className="w-4 h-4" />
+                  إضافة صنف
+                </button>
               </div>
 
               {loadingRecipes ? (
@@ -1271,6 +1477,99 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* ADD MENU ITEM DIALOG */}
+      {showAddMenuItem && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+            <button onClick={() => setShowAddMenuItem(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white" aria-label="إغلاق">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-xl font-bold text-white mb-2">إضافة صنف جديد</h3>
+            <p className="text-xs text-amber-300/90 mb-6">الصنف سيظهر في الكاشير بدون وصفة، لذلك لن يخصم من المخزن حتى تضيف وصفته.</p>
+
+            <form onSubmit={handleAddMenuItemSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">اسم الصنف</label>
+                <input type="text" required value={newItemName} onChange={(e) => setNewItemName(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right" placeholder="مثال: كريب نوتيلا" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">السعر (EGP)</label>
+                <input type="number" required min="0" step="0.01" value={newItemPrice} onChange={(e) => setNewItemPrice(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right" placeholder="0.00" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">القسم</label>
+                <select value={newItemCategory} onChange={(e) => setNewItemCategory(e.target.value)} disabled={Boolean(newItemNewCategory.trim())} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 disabled:opacity-40">
+                  {Array.from(new Set(recipesItems.map((item) => item.category?.name).filter(Boolean))).sort((a: string, b: string) => a.localeCompare(b, 'ar')).map((categoryName: string) => <option key={categoryName} value={categoryName}>{categoryName}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">أو أضف قسمًا جديدًا</label>
+                <input type="text" value={newItemNewCategory} onChange={(e) => setNewItemNewCategory(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right" placeholder="اتركه فارغًا لاستخدام القسم المختار" />
+              </div>
+              <button type="submit" disabled={submitLoading} className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl shadow-lg transition-all">
+                {submitLoading ? 'جاري إضافة الصنف...' : 'إضافة الصنف'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* INVOICE DETAILS DIALOG */}
+      {showOrderDetails && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowOrderDetails(false)}>
+          <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
+            <button onClick={() => setShowOrderDetails(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white" aria-label="إغلاق">
+              <X className="w-5 h-5" />
+            </button>
+
+            {loadingOrderDetails ? (
+              <div className="h-48 flex items-center justify-center gap-2 text-sm text-gray-400">
+                <RefreshCw className="w-5 h-5 animate-spin text-cyan-400" />
+                <span>جاري تحميل تفاصيل الفاتورة...</span>
+              </div>
+            ) : selectedOrder && (
+              <>
+                <div className="border-b border-white/10 pb-4 mb-4">
+                  <h3 className="text-lg font-bold text-white">تفاصيل الفاتورة</h3>
+                  <p className="font-mono text-sm text-cyan-400 mt-1">{selectedOrder.receiptNumber || selectedOrder.id.slice(0, 8)}</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 text-xs">
+                    <p className="text-gray-400">التاريخ: <span className="text-white">{new Date(selectedOrder.createdAt).toLocaleString('ar-EG')}</span></p>
+                    <p className="text-gray-400">الدفع: <span className="text-white">{selectedOrder.paymentMethod === 'CASH' ? 'كاش' : selectedOrder.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'صرف ستاف'}</span></p>
+                    {selectedOrder.paymentMethod !== 'STAFF' && <p className="text-gray-400">النوع: <span className="text-white">{selectedOrder.orderType === 'DINE_IN' ? `صالة - ${selectedOrder.table?.name || 'طاولة'}` : 'تيك أواي'}</span></p>}
+                    {selectedOrder.paymentMethod === 'STAFF' && selectedOrder.staffName && <p className="text-gray-400">اسم الستاف: <span className="text-white">{selectedOrder.staffName}</span></p>}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {selectedOrder.items.map((line) => (
+                    <div key={line.id} className="rounded-xl bg-slate-900/70 border border-white/5 p-3">
+                      <div className="flex justify-between gap-3 text-sm font-bold text-white">
+                        <span>{line.item.name} <span className="text-gray-400 font-normal">× {line.qty}</span></span>
+                        <span className="whitespace-nowrap">EGP {line.totalPrice.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between mt-1 text-[11px] text-gray-400">
+                        <span>سعر القطعة: EGP {line.unitPrice.toFixed(2)}</span>
+                        {line.modifiers.length > 0 && <span>إضافات: EGP {line.modifiers.reduce((sum, mod) => sum + mod.unitPriceImpact, 0).toFixed(2)}</span>}
+                      </div>
+                      {line.modifiers.length > 0 && <p className="mt-2 text-[11px] text-purple-300">{line.modifiers.map((mod) => mod.modifier.name).join('، ')}</p>}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border-t border-white/10 mt-5 pt-4 space-y-2 text-sm">
+                  <div className="flex justify-between text-gray-400"><span>الإجمالي قبل الخصم</span><span>EGP {selectedOrder.subtotal.toFixed(2)}</span></div>
+                  {selectedOrder.discount > 0 && <>
+                    <div className="flex justify-between text-rose-300"><span>الخصم</span><span>- EGP {selectedOrder.discount.toFixed(2)}</span></div>
+                    <p className="text-xs text-rose-200/90">سبب الخصم: {selectedOrder.discountReason || 'غير مسجل (فاتورة قديمة)'}</p>
+                  </>}
+                  <div className="flex justify-between text-base font-bold text-cyan-400"><span>الإجمالي النهائي</span><span>EGP {selectedOrder.total.toFixed(2)}</span></div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* RESTOCK DIALOG */}
       {showRestock && (
         <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -1312,6 +1611,10 @@ export default function AdminPage() {
                   min="0"
                   step="any"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي مبلغ التوريد (EGP)</label>
+                <input type="number" required value={restockAmount} onChange={(e) => setRestockAmount(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right" placeholder="مثال: 500" min="0" step="0.01" />
               </div>
 
               <button

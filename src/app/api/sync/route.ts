@@ -26,6 +26,7 @@ interface SyncOrder {
   status: string; // "COMPLETED" | "CANCELLED"
   subtotal: number;
   discount: number;
+  discountReason?: string | null;
   tax: number;
   total: number;
   createdAt: string;
@@ -70,6 +71,7 @@ export async function POST(request: Request) {
               status: order.status,
               subtotal: order.subtotal,
               discount: order.discount,
+              discountReason: order.discountReason || null,
               tax: order.tax,
               total: order.total,
               createdAt: new Date(order.createdAt),

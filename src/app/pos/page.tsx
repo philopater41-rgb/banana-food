@@ -66,6 +66,10 @@ export default function POSPage() {
   const [showOpenShift, setShowOpenShift] = useState(false);
   const [showCloseShift, setShowCloseShift] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+  const [attendanceName, setAttendanceName] = useState('');
+  const [attendanceNames, setAttendanceNames] = useState<string[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [showModifiersModal, setShowModifiersModal] = useState(false);
   const [activeItemForMod, setActiveItemForMod] = useState<LocalItem | null>(null);
   const [selectedMods, setSelectedMods] = useState<string[]>([]); // modifier IDs selected
@@ -89,6 +93,7 @@ export default function POSPage() {
   const [selectedMatId, setSelectedMatId] = useState('');
   const [inventoryAction, setInventoryAction] = useState<'view' | 'restock' | 'wastage' | 'addMaterial' | 'recipes'>('view');
   const [inventoryQty, setInventoryQty] = useState('');
+  const [inventoryRestockAmount, setInventoryRestockAmount] = useState('');
   const [inventoryReason, setInventoryReason] = useState('');
   const [submitInventoryLoading, setSubmitInventoryLoading] = useState(false);
 
@@ -113,6 +118,7 @@ export default function POSPage() {
   
   // POS Action inputs
   const [discountVal, setDiscountVal] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [staffName, setStaffName] = useState('');
   
@@ -227,14 +233,21 @@ export default function POSPage() {
       // after refreshing the server menu/table cache.
       await offlineDB.diningTables.bulkPut(resolvedTables);
       
-      setCategories(dbCats);
+      // Dexie returns its own key order, so enforce the display order here too.
+      // خدمات is a special service tab and should always stay at the end.
+      const orderedCategories = [...dbCats].sort((a, b) => {
+        if (a.name === 'خدمات') return 1;
+        if (b.name === 'خدمات') return -1;
+        return a.name.localeCompare(b.name, 'ar');
+      });
+      setCategories(orderedCategories);
       setItems(dbItems);
       setModifiers(dbMods);
       setHalls(dbHalls);
       setTables(resolvedTables);
       
-      if (dbCats.length > 0 && !selectedCategoryId) {
-        setSelectedCategoryId(dbCats[0].id);
+      if (orderedCategories.length > 0 && !selectedCategoryId) {
+        setSelectedCategoryId(orderedCategories[0].id);
       }
       if (dbHalls.length > 0 && (!activeHallId || !dbHalls.some((hall) => hall.id === activeHallId))) {
         setActiveHallId(dbHalls[0].id);
@@ -435,6 +448,7 @@ export default function POSPage() {
       setTables(prev => prev.map(t => t.id === cart.tableId ? { ...t, status: 'VACANT' } : t));
     }
     setDiscountVal('');
+    setDiscountReason('');
   };
 
   // Apply a valid discount immediately while the cashier types.
@@ -466,6 +480,10 @@ export default function POSPage() {
       triggerAlert('error', 'اكتب اسم الموظف الذي استلم الأصناف.');
       return;
     }
+    if (cart.discount > 0 && !discountReason.trim()) {
+      triggerAlert('error', 'اكتب سبب الخصم قبل إتمام الفاتورة.');
+      return;
+    }
 
     try {
       const orderId = generateUUID();
@@ -481,6 +499,7 @@ export default function POSPage() {
         status: 'COMPLETED',
         subtotal: cart.subtotal,
         discount: cart.discount,
+        discountReason: cart.discount > 0 ? discountReason.trim() : null,
         tax: cart.tax,
         total: cart.total,
         createdAt: new Date().toISOString(),
@@ -527,6 +546,7 @@ export default function POSPage() {
         total: 0,
       });
       setDiscountVal('0');
+      setDiscountReason('');
       setStaffName('');
 
       // 4. Set receipt for print preview
@@ -640,12 +660,56 @@ export default function POSPage() {
     }
   };
 
+  const ensureNoOpenTablesBeforeClosing = async () => {
+    const cartsWithOpenTables = await offlineDB.carts
+      .toArray()
+      .then((localCarts) => new Set(
+        localCarts
+          .filter((localCart) => localCart.orderType === 'DINE_IN' && localCart.tableId && localCart.items.length > 0)
+          .map((localCart) => localCart.tableId!)
+      ));
+    const occupiedTables = tables.filter((table) =>
+      table.status !== 'VACANT' || cartsWithOpenTables.has(table.id)
+    );
+    if (occupiedTables.length > 0) {
+      triggerAlert(
+        'error',
+        `لا يمكن تقفيل اليومية قبل إنهاء الترابيزات المفتوحة.\nالترابيزات المطلوبة: ${occupiedTables.map((table) => table.name).join('، ')}`
+      );
+      return false;
+    }
+    return true;
+  };
+
+  const openAttendance = async () => {
+    setShowAttendanceModal(true);
+    try { const res = await fetch('/api/attendance'); if (res.ok) { const data = await res.json(); setAttendanceNames(data.names || []); } } catch (error) { console.error(error); }
+  };
+  const handleAttendance = async (action: 'CHECK_IN' | 'CHECK_OUT') => {
+    if (!attendanceName.trim()) return triggerAlert('error', 'اكتب أو اختر اسم الموظف.');
+    setAttendanceLoading(true);
+    try {
+      const res = await fetch('/api/attendance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, employeeName: attendanceName }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAttendanceNames((names) => [...new Set([...names, attendanceName.trim()])].sort((a, b) => a.localeCompare(b, 'ar')));
+      triggerAlert('success', action === 'CHECK_IN' ? `تم تسجيل حضور ${attendanceName.trim()}.` : `تم تسجيل انصراف ${attendanceName.trim()}.`);
+      setAttendanceName(''); setShowAttendanceModal(false);
+    } catch (error: any) { triggerAlert('error', error.message || 'تعذر تسجيل الحضور.'); } finally { setAttendanceLoading(false); }
+  };
+
+  const handleRequestCloseShift = async () => {
+    if (await ensureNoOpenTablesBeforeClosing()) setShowCloseShift(true);
+  };
+
   // 7. Shift Closing POST
   const handleCloseShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift) return;
 
     try {
+      if (!(await ensureNoOpenTablesBeforeClosing())) return;
+
       const countPendingOrders = async () => {
         const pendingOrders = await offlineDB.salesOrders
           .where('syncStatus')
@@ -868,7 +932,7 @@ export default function POSPage() {
 
   const handlePOSRestockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedMatId || !inventoryQty) return;
+    if (!selectedMatId || !inventoryQty || inventoryRestockAmount === '') return;
     setSubmitInventoryLoading(true);
 
     try {
@@ -878,6 +942,7 @@ export default function POSPage() {
         body: JSON.stringify({
           rawMaterialId: selectedMatId,
           quantity: parseFloat(inventoryQty),
+          amount: parseFloat(inventoryRestockAmount),
         }),
       });
 
@@ -886,6 +951,7 @@ export default function POSPage() {
 
       triggerAlert('success', 'تم شحن وتوريد الخامة للمخزن بنجاح.');
       setInventoryQty('');
+      setInventoryRestockAmount('');
       setInventoryAction('view');
       fetchPOSInventory();
     } catch (err: any) {
@@ -1049,6 +1115,10 @@ export default function POSPage() {
           )}
 
           {/* Action buttons */}
+          <button onClick={openAttendance} className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-[10px] sm:text-xs font-semibold text-emerald-400 border border-emerald-500/20 transition-all shrink-0 flex items-center gap-1">
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">حضور وانصراف</span>
+          </button>
           <button 
             onClick={() => setShowInventoryModal(true)}
             className="px-2.5 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] sm:text-xs font-semibold text-cyan-400 border border-cyan-500/20 transition-all shrink-0 flex items-center gap-1"
@@ -1068,7 +1138,7 @@ export default function POSPage() {
               </button>
 
               <button 
-                onClick={() => setShowCloseShift(true)}
+                onClick={handleRequestCloseShift}
                 className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-[10px] sm:text-xs font-semibold text-rose-400 border border-rose-500/20 transition-all shrink-0 flex items-center gap-1"
               >
                 <Lock className="w-3.5 h-3.5" />
@@ -1141,6 +1211,7 @@ export default function POSPage() {
             <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2.5 max-h-[140px] overflow-y-auto pl-1">
               {tables
                 .filter(t => t.hallId === activeHallId)
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                 .map((table) => (
                   <button
                     key={table.id}
@@ -1312,6 +1383,16 @@ export default function POSPage() {
                 min="0"
                 max="100"
               />
+              {cart && cart.discount > 0 && (
+                <input
+                  type="text"
+                  value={discountReason}
+                  onChange={(e) => setDiscountReason(e.target.value)}
+                  className="w-full bg-slate-900 border border-rose-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-rose-400 text-right"
+                  placeholder="سبب الخصم (مطلوب)"
+                  maxLength={120}
+                />
+              )}
             </div>
 
             {/* Price Calculations */}
@@ -1408,13 +1489,29 @@ export default function POSPage() {
 
       {/* Alert Banner */}
       {alertMsg && (
-        <div className={`fixed bottom-4 left-4 z-50 p-4 rounded-xl shadow-lg border text-sm flex items-center gap-3 transition-all animate-float no-print flex-row-reverse ${
+        <div dir="rtl" className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-2rem)] max-w-xl p-4 rounded-xl shadow-2xl border text-sm flex items-start gap-3 transition-all no-print flex-row-reverse ${
           alertMsg.type === 'success' 
-            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 shadow-emerald-500/5' 
-            : 'bg-rose-500/10 border-rose-500/20 text-rose-400 shadow-rose-500/5'
+            ? 'bg-emerald-950 border-emerald-400/40 text-emerald-100' 
+            : 'bg-rose-950 border-rose-400/40 text-rose-100'
         }`}>
           {alertMsg.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
-          <span>{alertMsg.text}</span>
+          <span className="whitespace-pre-line font-semibold leading-relaxed text-right flex-1">{alertMsg.text}</span>
+        </div>
+      )}
+
+      {showAttendanceModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print">
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl">
+            <button onClick={() => setShowAttendanceModal(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
+            <h3 className="text-xl font-bold text-white mb-2">تسجيل حضور وانصراف</h3>
+            <p className="text-xs text-gray-400 mb-5">اكتب اسم الموظف أو اختَره، والوقت يتسجل تلقائيًا.</p>
+            <input list="attendance-names" value={attendanceName} onChange={(e) => setAttendanceName(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-emerald-500 text-right" placeholder="اسم الموظف" autoFocus />
+            <datalist id="attendance-names">{attendanceNames.map((name) => <option key={name} value={name} />)}</datalist>
+            <div className="grid grid-cols-2 gap-3 mt-5">
+              <button disabled={attendanceLoading} onClick={() => handleAttendance('CHECK_IN')} className="py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl disabled:opacity-50">تسجيل حضور</button>
+              <button disabled={attendanceLoading} onClick={() => handleAttendance('CHECK_OUT')} className="py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-xl disabled:opacity-50">تسجيل انصراف</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1546,6 +1643,10 @@ export default function POSPage() {
                         min="0"
                       />
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي مبلغ التوريد (EGP)</label>
+                    <input type="number" required value={inventoryRestockAmount} onChange={(e) => setInventoryRestockAmount(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right" placeholder="مثال: 500" min="0" step="0.01" />
                   </div>
                   <button
                     type="submit"
