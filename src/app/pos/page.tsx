@@ -8,7 +8,7 @@ import { offlineDB, type LocalCategory, type LocalItem, type LocalModifier, type
 import { 
   Coffee, LogOut, Wifi, WifiOff, Users, ShoppingBag, 
   Trash2, Plus, Minus, DollarSign, RefreshCw, 
-  CheckCircle2, AlertCircle, X, PlusCircle, Printer, Menu, Package, Lock
+  CheckCircle2, AlertCircle, X, PlusCircle, Printer, Menu, Package, Lock, MessageSquare
 } from 'lucide-react';
 
 type PaymentMethod = 'CASH' | 'INSTAPAY';
@@ -73,6 +73,9 @@ export default function POSPage() {
   const [showModifiersModal, setShowModifiersModal] = useState(false);
   const [activeItemForMod, setActiveItemForMod] = useState<LocalItem | null>(null);
   const [selectedMods, setSelectedMods] = useState<string[]>([]); // modifier IDs selected
+  const [itemComment, setItemComment] = useState('');
+  const [commentItemId, setCommentItemId] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState('');
 
   // Existing shift from server (for takeover scenario)
   const [existingShift, setExistingShift] = useState<any>(null);
@@ -340,10 +343,11 @@ export default function POSPage() {
     }
     setActiveItemForMod(item);
     setSelectedMods([]);
+    setItemComment('');
     setShowModifiersModal(true);
   };
 
-  const addItemToCartDirectly = async (item: LocalItem, selectedModList: LocalModifier[], customUnitPrice?: number) => {
+  const addItemToCartDirectly = async (item: LocalItem, selectedModList: LocalModifier[], customUnitPrice?: number, comment = '') => {
     if (!cart) return;
 
     const modPriceImpact = selectedModList.reduce((acc, m) => acc + m.priceImpact, 0);
@@ -354,6 +358,7 @@ export default function POSPage() {
       (ci) => 
         ci.itemId === item.id && 
         ci.unitPrice === unitPrice &&
+        (ci.comment || '') === comment &&
         ci.modifiers.length === selectedModList.length &&
         ci.modifiers.every((cm) => selectedModList.some((sm) => sm.id === cm.modifierId))
     );
@@ -375,6 +380,7 @@ export default function POSPage() {
         qty: 1,
         unitPrice,
         totalPrice: unitPrice,
+        comment: comment || null,
         modifiers: selectedModList.map(m => ({
           modifierId: m.id,
           name: m.name,
@@ -398,10 +404,19 @@ export default function POSPage() {
     if (!activeItemForMod) return;
     
     const selectedModObjects = modifiers.filter(m => selectedMods.includes(m.id));
-    addItemToCartDirectly(activeItemForMod, selectedModObjects);
+    addItemToCartDirectly(activeItemForMod, selectedModObjects, undefined, itemComment.trim());
     
     setShowModifiersModal(false);
     setActiveItemForMod(null);
+    setItemComment('');
+  };
+
+  const saveItemComment = async () => {
+    if (!cart || !commentItemId) return;
+    const updatedItems = cart.items.map((item) => item.id === commentItemId ? { ...item, comment: commentDraft.trim() || null } : item);
+    await saveAndRecalculateCart(updatedItems);
+    setCommentItemId(null);
+    setCommentDraft('');
   };
 
   // Update quantity in cart
@@ -503,6 +518,7 @@ export default function POSPage() {
           qty: i.qty,
           unitPrice: i.unitPrice,
           totalPrice: i.totalPrice,
+          comment: i.comment || null,
           modifiers: i.modifiers.map((m) => ({
             modifierId: m.modifierId,
             unitPriceImpact: m.unitPriceImpact,
@@ -1030,7 +1046,7 @@ export default function POSPage() {
 
               return (
                 <tr key={idx}>
-                  <td>{itDetails?.name || 'صنف'}{item.modifiers.length > 0 && <span className="receipt-addition">إضافة {additionsTotal.toFixed(2)}</span>}</td>
+                  <td>{itDetails?.name || 'صنف'}{item.comment && <span className="receipt-addition">{item.comment}</span>}{item.modifiers.length > 0 && <span className="receipt-addition">إضافة {additionsTotal.toFixed(2)}</span>}</td>
                   <td>{baseUnitPrice.toFixed(2)}</td>
                   <td>x{item.qty}</td>
                   <td>{item.totalPrice.toFixed(2)}</td>
@@ -1349,6 +1365,7 @@ export default function POSPage() {
                           ))}
                         </div>
                       )}
+                      {item.comment && <p className="text-[10px] text-amber-300 mt-1">{item.comment}</p>}
                     </div>
                     <span className="font-bold text-xs text-cyan-400 shrink-0">
                       EGP {item.totalPrice.toFixed(2)}
@@ -1373,6 +1390,13 @@ export default function POSPage() {
                         className="p-1 rounded bg-white/5 hover:bg-white/10 text-gray-300 transition-all"
                       >
                         <Minus className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => { setCommentItemId(item.id); setCommentDraft(item.comment || ''); }}
+                        className="text-gray-400 hover:text-amber-300 transition-colors"
+                        title="إضافة تعليق"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleRemoveItem(item.id)}
@@ -1814,12 +1838,45 @@ export default function POSPage() {
               })}
             </div>
 
+            <div className="mt-5">
+              <label className="block text-xs font-semibold text-gray-300 mb-2">تعليق على الصنف (اختياري)</label>
+              <input
+                type="text"
+                value={itemComment}
+                onChange={(e) => setItemComment(e.target.value)}
+                className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right"
+                placeholder="مثال: بدون سكر / زيادة ثلج"
+                maxLength={120}
+              />
+            </div>
+
             <button
               onClick={confirmModifiers}
               className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl shadow-lg transition-all mt-6 text-xs uppercase tracking-wider"
             >
               تأكيد وإضافة للفاتورة
             </button>
+          </div>
+        </div>
+      )}
+
+      {commentItemId && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setCommentItemId(null)}>
+          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
+            <button onClick={() => setCommentItemId(null)} className="absolute top-4 left-4 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
+            <h3 className="text-lg font-bold text-white mb-2">تعليق على الصنف</h3>
+            <p className="text-xs text-gray-400 mb-4">التعليق سيظهر في الفاتورة.</p>
+            <input
+              autoFocus
+              type="text"
+              value={commentDraft}
+              onChange={(e) => setCommentDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void saveItemComment(); }}
+              className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-amber-500 text-right"
+              placeholder="اكتب تعليقًا"
+              maxLength={120}
+            />
+            <button onClick={() => void saveItemComment()} className="w-full py-3 mt-4 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl">حفظ التعليق</button>
           </div>
         </div>
       )}

@@ -173,6 +173,7 @@ model SalesOrderItem {
   qty          Int
   unitPrice    Float
   totalPrice   Float
+  comment      String?
   
   modifiers    SalesOrderItemModifier[]
 }

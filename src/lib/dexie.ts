@@ -43,6 +43,7 @@ export interface LocalCartItem {
   qty: number;
   unitPrice: number;
   totalPrice: number;
+  comment?: string | null;
   modifiers: LocalCartItemModifier[];
 }
 
@@ -80,6 +81,7 @@ export interface LocalSalesOrder {
     qty: number;
     unitPrice: number;
     totalPrice: number;
+    comment?: string | null;
     modifiers: {
       modifierId: string;
       unitPriceImpact: number;

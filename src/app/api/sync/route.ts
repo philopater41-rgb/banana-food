@@ -12,6 +12,7 @@ interface SyncOrderItem {
   qty: number;
   unitPrice: number;
   totalPrice: number;
+  comment?: string | null;
   modifiers?: SyncOrderItemModifier[];
 }
 
@@ -83,6 +84,7 @@ export async function POST(request: Request) {
                   qty: item.qty,
                   unitPrice: item.unitPrice,
                   totalPrice: item.totalPrice,
+                  comment: item.comment?.trim() || null,
                   modifiers: {
                     create: (item.modifiers || []).map((mod) => ({
                       modifierId: mod.modifierId,
