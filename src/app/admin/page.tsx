@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { 
@@ -153,6 +153,7 @@ export default function AdminPage() {
   const [selectedOrder, setSelectedOrder] = useState<OrderDetails | null>(null);
   const [showOrderDetails, setShowOrderDetails] = useState(false);
   const [loadingOrderDetails, setLoadingOrderDetails] = useState(false);
+  const inventoryTableScrollRef = useRef<HTMLDivElement>(null);
   const [dailySales, setDailySales] = useState<SalesSummary[]>([]);
   const [monthlySalesHistory, setMonthlySalesHistory] = useState<SalesSummary[]>([]);
   const [shiftSummaries, setShiftSummaries] = useState<ShiftSummary[]>([]);
@@ -1191,8 +1192,16 @@ export default function AdminPage() {
                   <div><p className="text-xs text-gray-400">مصروفات التوريد هذا الشهر</p><p className="text-2xl font-bold text-amber-400 mt-1">EGP {monthlyRestockTotal.toFixed(2)}</p></div>
                   <span className="text-xs text-gray-500">يشمل كل التوريدات المسجلة</span>
                 </div>
-                <div className="glass-panel rounded-2xl overflow-hidden">
-                  <table className="w-full text-right text-xs border-collapse">
+                <div className="glass-panel rounded-2xl p-3">
+                  <div className="flex items-center justify-between mb-2 text-[10px] text-gray-400">
+                    <span>اسحب الجدول يمينًا ويسارًا أو استخدم الأسهم</span>
+                    <div className="flex gap-1" dir="ltr">
+                      <button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: -300, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">←</button>
+                      <button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: 300, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">→</button>
+                    </div>
+                  </div>
+                  <div ref={inventoryTableScrollRef} className="w-full overflow-x-auto touch-pan-x overscroll-x-contain rounded-xl border border-white/5" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x' }}>
+                  <table className="min-w-[900px] text-right text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400">
                         <th className="p-4">اسم المادة الخام</th>
@@ -1246,6 +1255,7 @@ export default function AdminPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
                 <div className="glass-panel rounded-2xl overflow-hidden">
                   <div className="p-4 border-b border-white/5 font-bold text-sm text-white">سجل التوريدات</div>

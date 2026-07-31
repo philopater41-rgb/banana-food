@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -132,6 +132,7 @@ export default function POSPage() {
 
   // Loading & Alert status
   const [loading, setLoading] = useState(true);
+  const inventoryTableScrollRef = useRef<HTMLDivElement>(null);
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
   // Mounted state to prevent Next.js SSR hydration mismatch
@@ -2114,8 +2115,12 @@ export default function POSPage() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="overflow-x-auto rounded-xl border border-white/5 max-h-[350px]">
-                      <table className="w-full text-right text-xs border-collapse">
+                    <div className="flex items-center justify-between text-[10px] text-gray-400 px-1">
+                      <span>اسحب الجدول يمينًا ويسارًا أو استخدم الأسهم</span>
+                      <div className="flex gap-1" dir="ltr"><button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: -280, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">←</button><button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: 280, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">→</button></div>
+                    </div>
+                    <div ref={inventoryTableScrollRef} className="w-full overflow-x-auto touch-pan-x overscroll-x-contain rounded-xl border border-white/5 max-h-[350px]" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x' }}>
+                      <table className="min-w-[680px] text-right text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400 sticky top-0 z-10">
                             <th className="p-3">اسم المادة الخام</th>
