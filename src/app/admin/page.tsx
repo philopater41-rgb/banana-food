@@ -6,7 +6,7 @@ import { useAppStore } from '@/lib/store';
 import { 
   TrendingUp, Package, AlertTriangle, Users, LogOut, 
   Trash2, DollarSign, CheckCircle2, RefreshCw, 
-  ChevronRight, Calendar, PlusCircle, ShoppingBag, X, Menu
+  ChevronRight, Calendar, PlusCircle, ShoppingBag, X, Menu, Pencil
 } from 'lucide-react';
 
 interface KPIState {
@@ -158,15 +158,15 @@ export default function AdminPage() {
   const [recipeIngredients, setRecipeIngredients] = useState<Array<{ rawMaterialId: string; quantity: number }>>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState<RawMaterial | null>(null);
   const [showAddMenuItem, setShowAddMenuItem] = useState(false);
 
   // New Material inputs
   const [newMatName, setNewMatName] = useState('');
   const [newMatStock, setNewMatStock] = useState('');
   const [newMatMinStock, setNewMatMinStock] = useState('');
-  const [newMatPurchaseUnit, setNewMatPurchaseUnit] = useState('');
-  const [newMatDeductUnit, setNewMatDeductUnit] = useState('');
-  const [newMatConvFactor, setNewMatConvFactor] = useState('');
+  const [newMatUnit, setNewMatUnit] = useState('');
+  const [newMatCustomUnit, setNewMatCustomUnit] = useState('');
   const [newItemName, setNewItemName] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('');
@@ -356,7 +356,8 @@ export default function AdminPage() {
   // Handle Add New Raw Material
   const handleAddMaterialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMatName || !newMatPurchaseUnit || !newMatDeductUnit || !newMatConvFactor) return;
+    const unit = newMatUnit === 'أخرى' ? newMatCustomUnit.trim() : newMatUnit;
+    if (!newMatName || !unit) return;
     setSubmitLoading(true);
 
     try {
@@ -367,9 +368,9 @@ export default function AdminPage() {
           name: newMatName,
           stockQty: parseFloat(newMatStock) || 0.0,
           minStockLevel: parseFloat(newMatMinStock) || 0.0,
-          purchaseUnit: newMatPurchaseUnit,
-          deductUnit: newMatDeductUnit,
-          conversionFactor: parseFloat(newMatConvFactor) || 1.0,
+          purchaseUnit: unit,
+          deductUnit: unit,
+          conversionFactor: 1,
         }),
       });
 
@@ -381,9 +382,8 @@ export default function AdminPage() {
       setNewMatName('');
       setNewMatStock('');
       setNewMatMinStock('');
-      setNewMatPurchaseUnit('');
-      setNewMatDeductUnit('');
-      setNewMatConvFactor('');
+      setNewMatUnit('');
+      setNewMatCustomUnit('');
       fetchInventory();
     } catch (err: any) {
       triggerAlert('error', err.message || 'خطأ في إضافة الخامة');
@@ -478,6 +478,40 @@ export default function AdminPage() {
     } catch {
       triggerAlert('error', 'تعذر تعديل سعر الصنف.');
     }
+  };
+
+  const handleUpdateMaterialSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMaterial) return;
+    setSubmitLoading(true);
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawMaterialId: editingMaterial.id, ...editingMaterial, conversionFactor: 1 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشل تعديل الخامة');
+      triggerAlert('success', 'تم تعديل بيانات الخامة.');
+      setEditingMaterial(null);
+      fetchInventory();
+    } catch (error: any) {
+      triggerAlert('error', error.message || 'تعذر تعديل الخامة.');
+    } finally { setSubmitLoading(false); }
+  };
+
+  const handleDeleteMaterial = async (material: RawMaterial) => {
+    if (!window.confirm(`حذف خامة «${material.name}»؟ سيتم حذفها من الوصفات المرتبطة بها أيضًا.`)) return;
+    setSubmitLoading(true);
+    try {
+      const res = await fetch('/api/inventory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawMaterialId: material.id }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشل حذف الخامة');
+      triggerAlert('success', 'تم حذف الخامة.');
+      fetchInventory();
+      fetchRecipes();
+    } catch (error: any) {
+      triggerAlert('error', error.message || 'تعذر حذف الخامة.');
+    } finally { setSubmitLoading(false); }
   };
 
   const handleRemoveMenuItem = async (item: { id: string; name: string }) => {
@@ -1112,8 +1146,7 @@ export default function AdminPage() {
                         <th className="p-4">اسم المادة الخام</th>
                         <th className="p-4">الرصيد الحالي بالمخزن</th>
                         <th className="p-4">حد التنبيه للنفاد</th>
-                        <th className="p-4">وحدة الشراء</th>
-                        <th className="p-4">وحدة الاستهلاك</th>
+                        <th className="p-4">الوحدة</th>
                         <th className="p-4">الحالة</th>
                         <th className="p-4">العمليات</th>
                       </tr>
@@ -1124,12 +1157,8 @@ export default function AdminPage() {
                           <td className="p-4 font-semibold text-white">{mat.name}</td>
                           <td className="p-4 font-mono font-bold text-cyan-400">
                             {mat.stockQty} {mat.deductUnit}
-                            <span className="text-[10px] text-gray-500 block font-normal mt-0.5">
-                              (~{(mat.stockQty / mat.conversionFactor).toFixed(2)} {mat.purchaseUnit})
-                            </span>
                           </td>
                           <td className="p-4"><button onClick={() => handleUpdateStockAlertLevel(mat)} className="text-gray-300 hover:text-cyan-400 underline decoration-dotted underline-offset-4">{mat.minStockLevel} {mat.deductUnit}</button></td>
-                          <td className="p-4 text-gray-500 uppercase tracking-wider">{mat.purchaseUnit}</td>
                           <td className="p-4 text-gray-500 uppercase tracking-wider">{mat.deductUnit}</td>
                           <td className="p-4">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -1147,6 +1176,19 @@ export default function AdminPage() {
                                 className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded-lg text-[10px] font-bold transition-all"
                               >
                                 توريد
+                              </button>
+                              <button
+                                onClick={() => setEditingMaterial({ ...mat })}
+                                className="px-2.5 py-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 rounded-lg text-[10px] font-bold transition-all"
+                              >
+                                تعديل
+                              </button>
+                              <button
+                                onClick={() => void handleDeleteMaterial(mat)}
+                                disabled={submitLoading}
+                                className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-[10px] font-bold transition-all disabled:opacity-50"
+                              >
+                                حذف
                               </button>
                             </div>
                           </td>
@@ -1449,7 +1491,7 @@ export default function AdminPage() {
               <X className="w-5 h-5" />
             </button>
             <h3 className="text-xl font-bold text-white mb-2">توريد وشحن خامات للمخزن</h3>
-            <p className="text-xs text-gray-400 mb-6">اكتب الكمية الموردة بوحدة الشراء الكبرى (مثال: بالكيلو، بالكرتونة). سيتم تحويلها تلقائياً.</p>
+            <p className="text-xs text-gray-400 mb-6">اكتب الكمية الموردة بوحدة الخامة المسجلة.</p>
             
             <form onSubmit={handleRestockSubmit} className="space-y-4">
               <div>
@@ -1461,14 +1503,14 @@ export default function AdminPage() {
                 >
                   {materials.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.name} (وحدة الشراء: {m.purchaseUnit})
+                      {m.name} ({m.deductUnit})
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-2">الكمية المراد إضافتها (بوحدة الشراء)</label>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">الكمية المراد إضافتها ({materials.find((m) => m.id === selectedMaterialId)?.deductUnit || 'الوحدة'})</label>
                 <input
                   type="number"
                   required
@@ -1498,6 +1540,24 @@ export default function AdminPage() {
       )}
 
       {/* ADD NEW RAW MATERIAL MODAL */}
+      {editingMaterial && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setEditingMaterial(null)}>
+          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
+            <button onClick={() => setEditingMaterial(null)} className="absolute top-4 left-4 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
+            <h3 className="text-xl font-bold text-white mb-5">تعديل بيانات الخامة</h3>
+            <form onSubmit={handleUpdateMaterialSubmit} className="space-y-4">
+              <div><label className="block text-xs font-semibold text-gray-400 mb-1.5">اسم المادة الخام</label><input required value={editingMaterial.name} onChange={(e) => setEditingMaterial({ ...editingMaterial, name: e.target.value })} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right" /></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-xs font-semibold text-gray-400 mb-1.5">الرصيد الحالي</label><input type="number" required min="0" step="any" value={editingMaterial.stockQty} onChange={(e) => setEditingMaterial({ ...editingMaterial, stockQty: Number(e.target.value) })} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right" /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 mb-1.5">حد التنبيه</label><input type="number" required min="0" step="any" value={editingMaterial.minStockLevel} onChange={(e) => setEditingMaterial({ ...editingMaterial, minStockLevel: Number(e.target.value) })} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right" /></div>
+              </div>
+              <div><label className="block text-xs font-semibold text-gray-400 mb-1.5">الوحدة</label><input required value={editingMaterial.deductUnit} onChange={(e) => setEditingMaterial({ ...editingMaterial, purchaseUnit: e.target.value, deductUnit: e.target.value })} className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right" /></div>
+              <button type="submit" disabled={submitLoading} className="w-full py-3 bg-purple-500 hover:bg-purple-600 text-white font-bold rounded-xl disabled:opacity-50">{submitLoading ? 'جاري الحفظ...' : 'حفظ التعديلات'}</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {showAddMaterial && (
         <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowAddMaterial(false)}>
           <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
@@ -1550,42 +1610,34 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الشراء (الكبرى)</label>
-                  <input
-                    type="text"
-                    required
-                    value={newMatPurchaseUnit}
-                    onChange={(e) => setNewMatPurchaseUnit(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                    placeholder="مثال: علبة"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الاستهلاك (الصغرى)</label>
-                  <input
-                    type="text"
-                    required
-                    value={newMatDeductUnit}
-                    onChange={(e) => setNewMatDeductUnit(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                    placeholder="مثال: مل"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">معامل التحويل (الكبيرة للصغيرة)</label>
-                  <input
-                    type="number"
-                    required
-                    value={newMatConvFactor}
-                    onChange={(e) => setNewMatConvFactor(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                    placeholder="مثال: 1000"
-                    min="1"
-                  />
-                </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">الوحدة</label>
+                <select
+                  required
+                  value={newMatUnit}
+                  onChange={(e) => setNewMatUnit(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                >
+                  <option value="">اختار الوحدة</option>
+                  <option value="مل">مل</option>
+                  <option value="جم">جم</option>
+                  <option value="حبة">حبة</option>
+                  <option value="أخرى">أخرى (اكتبها بنفسك)</option>
+                </select>
               </div>
+              {newMatUnit === 'أخرى' && (
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">اكتب الوحدة</label>
+                  <input
+                    type="text"
+                    required
+                    value={newMatCustomUnit}
+                    onChange={(e) => setNewMatCustomUnit(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
+                    placeholder="مثال: كيس أو زجاجة"
+                  />
+                </div>
+              )}
 
               <button
                 type="submit"

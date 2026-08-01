@@ -68,18 +68,45 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const { rawMaterialId, minStockLevel } = await request.json();
-    const level = Number(minStockLevel);
-    if (!rawMaterialId || !Number.isFinite(level) || level < 0) {
-      return NextResponse.json({ error: 'حد التنبيه يجب أن يكون صفرًا أو أكبر.' }, { status: 400 });
+    const { rawMaterialId, name, stockQty, minStockLevel, purchaseUnit, deductUnit, conversionFactor } = await request.json();
+    if (!rawMaterialId) {
+      return NextResponse.json({ error: 'الخامة مطلوبة.' }, { status: 400 });
+    }
+    const data: Record<string, string | number> = {};
+    if (name !== undefined) data.name = String(name).trim();
+    if (stockQty !== undefined) data.stockQty = Number(stockQty);
+    if (minStockLevel !== undefined) data.minStockLevel = Number(minStockLevel);
+    if (purchaseUnit !== undefined) data.purchaseUnit = String(purchaseUnit).trim();
+    if (deductUnit !== undefined) data.deductUnit = String(deductUnit).trim();
+    if (conversionFactor !== undefined) data.conversionFactor = Number(conversionFactor);
+    if (!Object.keys(data).length || Object.values(data).some((value) => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) {
+      return NextResponse.json({ error: 'راجع بيانات الخامة وتأكد أن الأرقام صحيحة.' }, { status: 400 });
     }
     const rawMaterial = await prisma.rawMaterial.update({
       where: { id: rawMaterialId },
-      data: { minStockLevel: level },
+      data,
     });
     return NextResponse.json({ rawMaterial });
   } catch (error) {
-    console.error('Update stock alert level error:', error);
-    return NextResponse.json({ error: 'تعذر تعديل حد التنبيه.' }, { status: 500 });
+    console.error('Update raw material error:', error);
+    return NextResponse.json({ error: 'تعذر تعديل بيانات الخامة.' }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { rawMaterialId } = await request.json();
+    if (!rawMaterialId) return NextResponse.json({ error: 'الخامة مطلوبة.' }, { status: 400 });
+    await prisma.$transaction(async (tx) => {
+      await tx.recipe.deleteMany({ where: { rawMaterialId } });
+      await tx.recipeModifier.deleteMany({ where: { rawMaterialId } });
+      await tx.wastageLog.deleteMany({ where: { rawMaterialId } });
+      await tx.restockLog.deleteMany({ where: { rawMaterialId } });
+      await tx.rawMaterial.delete({ where: { id: rawMaterialId } });
+    });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Delete raw material error:', error);
+    return NextResponse.json({ error: 'تعذر حذف الخامة.' }, { status: 500 });
   }
 }
