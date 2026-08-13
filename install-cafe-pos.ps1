@@ -1,4 +1,4 @@
-# Day & Night POS - one-time installer for the cafe computer.
+# Day & Night POS - Automated installer script for client machines.
 # Run install-cafe-pos.bat by double-clicking it.
 
 $ErrorActionPreference = 'Stop'
@@ -15,81 +15,140 @@ function Write-Step([string]$message) {
   Write-Host "`n==> $message" -ForegroundColor Cyan
 }
 
+function Ensure-NodeInPath {
+  $nodeDirs = @(
+    (Join-Path $env:ProgramFiles 'nodejs'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\node'),
+    (Join-Path $env:APPDATA 'npm')
+  )
+  foreach ($dir in $nodeDirs) {
+    if (Test-Path $dir) {
+      if ($env:Path -notlike "*$dir*") {
+        $env:Path = "$dir;$env:Path"
+      }
+    }
+  }
+}
+
 function Get-NodeCommand {
+  Ensure-NodeInPath
   $node = Get-Command node -ErrorAction SilentlyContinue
   if ($node) { return $node.Source }
-  $candidate = Join-Path $env:ProgramFiles 'nodejs\node.exe'
-  if (Test-Path $candidate) {
-    $env:Path = "$(Split-Path $candidate);$env:Path"
-    return $candidate
-  }
   return $null
 }
 
-Write-Host 'Day & Night POS - Cafe Computer Installer' -ForegroundColor Yellow
+Write-Host "====================================================" -ForegroundColor Yellow
+Write-Host "  Day & Night POS - Client Computer Installation" -ForegroundColor Yellow
+Write-Host "====================================================" -ForegroundColor Yellow
 
+# 1. Ensure Node.js is installed
 if (-not (Get-NodeCommand)) {
-  Write-Step 'Installing Node.js (one time only)'
+  Write-Step 'Installing Node.js LTS...'
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw 'winget was not found. Update Windows App Installer, then run this file again.'
+    Write-Host "[!] winget is not available on this system." -ForegroundColor Red
+    Write-Host "[!] Please download and install Node.js LTS manually from https://nodejs.org/" -ForegroundColor Red
+    throw 'Node.js is missing and winget was not found.'
   }
+  
   winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements --accept-package-agreements
+  Ensure-NodeInPath
+  
   if (-not (Get-NodeCommand)) {
-    throw 'Node.js was installed. Close this window and run install-cafe-pos.bat again.'
+    throw 'Node.js was installed. Please restart your computer or command prompt and run install-cafe-pos.bat again.'
   }
 }
 
-Write-Step 'Downloading the latest POS version'
+Write-Host "Node.js detected at: $(Get-NodeCommand)" -ForegroundColor Green
+
+# 2. Stop any running Node processes to avoid file locks
+Write-Step 'Stopping any running POS instances...'
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+# 3. Prepare application files (Local Package or Remote Download)
+Write-Step 'Preparing project files...'
 Remove-Item -LiteralPath $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+
 if (Test-Path $localPackage) {
-  Write-Host 'Using the local package from this folder.' -ForegroundColor Green
+  Write-Host 'Using local package zip from installer folder.' -ForegroundColor Green
   Copy-Item -LiteralPath $localPackage -Destination $zipPath -Force
 } else {
+  Write-Host 'Downloading latest version from GitHub...' -ForegroundColor Green
   Invoke-WebRequest -Uri $repoZip -OutFile $zipPath
 }
-Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
-$downloadedApp = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
-if (-not $downloadedApp) { throw 'Could not extract the project files.' }
 
-Write-Step 'Preparing application files'
+Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
+
+# Locate extracted app directory (handles both zipped root folder and root files)
+$sourceAppPath = $null
+if (Test-Path (Join-Path $extractPath 'package.json')) {
+  $sourceAppPath = $extractPath
+} else {
+  $subDir = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
+  if ($subDir) {
+    $sourceAppPath = $subDir.FullName
+  }
+}
+
+if (-not $sourceAppPath -or -not (Test-Path (Join-Path $sourceAppPath 'package.json'))) {
+  throw 'Invalid package structure: package.json was not found in the extracted files.'
+}
+
+# Preserve existing .env file if present
 New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
 $previousEnvFile = Join-Path $appPath '.env'
 $previousEnvContents = if (Test-Path $previousEnvFile) { Get-Content -LiteralPath $previousEnvFile -Raw } else { $null }
-Remove-Item -LiteralPath $appPath -Recurse -Force -ErrorAction SilentlyContinue
-Move-Item -LiteralPath $downloadedApp.FullName -Destination $appPath
 
+# Replace application directory safely
+Remove-Item -LiteralPath $appPath -Recurse -Force -ErrorAction SilentlyContinue
+Move-Item -LiteralPath $sourceAppPath -Destination $appPath -Force
+
+# Restore or create .env file
 $envFile = Join-Path $appPath '.env'
 if ($previousEnvContents) {
   Set-Content -LiteralPath $envFile -Value $previousEnvContents -Encoding utf8
 } elseif (Test-Path $bundledEnvFile) {
   Copy-Item -LiteralPath $bundledEnvFile -Destination $envFile -Force
 } elseif (-not (Test-Path $envFile)) {
-  Write-Host 'Paste the Neon DATABASE_URL (only required once):' -ForegroundColor Yellow
+  Write-Host 'Paste the Neon DATABASE_URL:' -ForegroundColor Yellow
   $databaseUrl = Read-Host 'DATABASE_URL'
   if ([string]::IsNullOrWhiteSpace($databaseUrl)) { throw 'DATABASE_URL is required.' }
   Set-Content -LiteralPath $envFile -Value "DATABASE_URL=`"$databaseUrl`"" -Encoding utf8
 }
 
-Write-Step 'Installing packages and building the local app (may take several minutes)'
+# 4. Install dependencies and build project
+Write-Step 'Installing npm packages and building local application...'
 Push-Location $appPath
 try {
-  npm.cmd ci
+  Ensure-NodeInPath
+  
+  Write-Host 'Running npm install...' -ForegroundColor Green
+  npm.cmd install --no-audit --no-fund
+  if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+
+  Write-Host 'Generating Prisma client...' -ForegroundColor Green
   npx.cmd prisma generate
+  if ($LASTEXITCODE -ne 0) { throw "prisma generate failed with exit code $LASTEXITCODE" }
+
+  Write-Host 'Building Next.js app...' -ForegroundColor Green
   npx.cmd next build
+  if ($LASTEXITCODE -ne 0) { throw "next build failed with exit code $LASTEXITCODE" }
 } finally {
   Pop-Location
 }
 
+# 5. Create Desktop Launcher & Launcher script
+Write-Step 'Creating Desktop Shortcut...'
 $launcher = Join-Path $appRoot 'Open Day & Night POS.cmd'
 @"
 @echo off
 cd /d "$appPath"
 start "Day & Night POS Server" /min cmd /c "npm.cmd start"
-timeout /t 4 /nobreak >nul
-start http://localhost:3000
+timeout /t 3 /nobreak >nul
+start msedge --kiosk-printing --app=http://localhost:3000 2>nul || start chrome --kiosk-printing --app=http://localhost:3000 2>nul || start http://localhost:3000
 "@ | Set-Content -LiteralPath $launcher -Encoding ascii
 
-$desktopLauncher = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Open Day & Night POS.lnk'
+$desktopLauncher = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Day & Night POS.lnk'
 if (Test-Path $bundledIconFile) {
   $installedIcon = Join-Path $appPath 'day-night-pos.ico'
   Copy-Item -LiteralPath $bundledIconFile -Destination $installedIcon -Force
@@ -101,9 +160,12 @@ if (Test-Path $bundledIconFile) {
   $shortcut.IconLocation = "$installedIcon,0"
   $shortcut.Save()
 } else {
-  Copy-Item -LiteralPath $launcher -Destination (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Open Day & Night POS.cmd') -Force
+  Copy-Item -LiteralPath $launcher -Destination (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Day & Night POS.cmd') -Force
 }
 
-Write-Host "`nInstallation completed successfully." -ForegroundColor Green
-Write-Host "For daily use, double-click the Day & Night POS icon on the Desktop." -ForegroundColor Green
+Write-Host "`n====================================================" -ForegroundColor Green
+Write-Host "  Installation Completed Successfully!" -ForegroundColor Green
+Write-Host "  Double-click the 'Day & Night POS' icon on your Desktop." -ForegroundColor Green
+Write-Host "====================================================" -ForegroundColor Green
+
 & $launcher

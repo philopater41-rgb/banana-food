@@ -212,6 +212,21 @@ export default function POSPage() {
               });
             });
             await offlineDB.diningTables.bulkAdd(allTables);
+
+            if (typeof data.todayOrdersCount === 'number') {
+              const now = new Date();
+              const dateKey = [
+                now.getFullYear(),
+                String(now.getMonth() + 1).padStart(2, '0'),
+                String(now.getDate()).padStart(2, '0'),
+              ].join('');
+              const counterKey = `dn_receipt_counter_${dateKey}`;
+              const currentLocal = Number.parseInt(localStorage.getItem(counterKey) || '0', 10);
+              if (data.todayOrdersCount > currentLocal) {
+                localStorage.setItem(counterKey, String(data.todayOrdersCount));
+              }
+            }
+
           console.log('Local cache synced with server POS data.');
         }
       }
@@ -558,9 +573,12 @@ export default function POSPage() {
       setDiscountVal('0');
       setDiscountReason('');
 
-      // 4. Set receipt for print preview
+      // 4. Set receipt for print preview and trigger auto print
       setReceiptOrder(newOrder);
       setShowPrintModal(true);
+      setTimeout(() => {
+        window.print();
+      }, 150);
 
       triggerAlert('success', 'تم حفظ الأوردر وتقفيل الحساب!');
       
@@ -1072,6 +1090,72 @@ export default function POSPage() {
     );
   };
 
+  const BaristaKotLayout = ({ preview = false }: { preview?: boolean }) => {
+    if (!receiptOrder) return null;
+
+    const totalQtyCount = receiptOrder.items.reduce((sum, item) => sum + item.qty, 0);
+    const tableName = receiptOrder.tableId ? (tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة') : null;
+    const orderTypeLabel = receiptOrder.orderType === 'DINE_IN' 
+      ? `صالة${tableName ? ` - ${tableName}` : ''}`
+      : 'تيك أواي';
+    const cashierNameText = activeShift?.cashierName || user?.name || 'كاشير';
+    const timeFormatted = new Date(receiptOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return (
+      <div className={`kot-layout ${preview ? 'receipt-preview' : ''}`} dir="rtl">
+        {/* Top Order Number Box */}
+        <div className="kot-box kot-order-num">
+          {receiptOrder.receiptNumber}
+        </div>
+
+        {/* Second Order Type Box */}
+        <div className="kot-box kot-order-type">
+          {orderTypeLabel}
+        </div>
+
+        {/* Third Cashier Box */}
+        <div className="kot-box kot-cashier">
+          كاشير: {cashierNameText}
+        </div>
+
+        {/* Items Table */}
+        <table className="kot-table">
+          <thead>
+            <tr>
+              <th className="kot-item-name-col">الصنف</th>
+              <th className="kot-item-qty-col">الكمية</th>
+            </tr>
+          </thead>
+          <tbody>
+            {receiptOrder.items.map((item, idx) => {
+              const itDetails = items.find(i => i.id === item.itemId);
+              return (
+                <tr key={idx}>
+                  <td className="kot-item-name-col">
+                    {itDetails?.name || 'صنف'}
+                    {item.comment && <span className="receipt-addition">ملاحظة: {item.comment}</span>}
+                  </td>
+                  <td className="kot-item-qty-col">{item.qty}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Bottom Footer Bar */}
+        <div className="kot-footer-grid">
+          <div className="kot-footer-cell">
+            {timeFormatted}
+          </div>
+          <div className="kot-footer-cell flex items-center justify-center gap-1">
+            <span>عدد الأصناف</span>
+            <strong className="mr-1">{totalQtyCount}</strong>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (!mounted) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#090d16] text-gray-200 text-right" dir="rtl">
@@ -1084,7 +1168,8 @@ export default function POSPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#090d16] text-gray-200 text-right" dir="rtl">
+    <>
+      <div className="flex flex-col h-screen bg-[#090d16] text-gray-200 text-right no-print" dir="rtl">
       
       {/* 1. Header Navigation Bar */}
       <header className="h-16 shrink-0 bg-[#0c1424] border-b border-white/5 px-4 sm:px-6 flex items-center justify-between z-10 no-print">
@@ -1935,9 +2020,13 @@ export default function POSPage() {
             </h3>
             <p className="text-xs text-gray-400 mb-6">معاينة ريسيت العميل. اضغط على زرار الطباعة للإخراج.</p>
             
-            {/* Mini invoice representation */}
+            {/* Mini invoice representation (Customer + Barista KOT) */}
             <div className="p-3 bg-white text-black font-mono rounded-lg shadow-inner max-h-[350px] overflow-y-auto">
               <ReceiptLayout preview />
+              <div className="kot-divider text-gray-500 my-4 border-t-2 border-dashed border-gray-400 pt-2 text-[10px] text-center font-bold">
+                - - - بون البار / المطبخ - - -
+              </div>
+              <BaristaKotLayout preview />
             </div>
 
             <div className="grid grid-cols-2 gap-3 mt-6">
@@ -1953,21 +2042,14 @@ export default function POSPage() {
                 className="py-3.5 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5"
               >
                 <Printer className="w-4 h-4" />
-                <span>طباعة الريسيت</span>
+                <span>طباعة مرة أخرى</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 4. Thermal receipt print-only view (Active when printing) */}
-      {/* ======================================================== */}
-      {receiptOrder && (
-        <div className="hidden print:block print-area font-mono text-black bg-white" dir="rtl">
-          <ReceiptLayout />
-        </div>
-      )}
+
 
       {/* CASHIER INVENTORY MODAL */}
       {showInventoryModal && (
@@ -2393,5 +2475,22 @@ export default function POSPage() {
       </div>
 
     </div>
+
+      {/* ======================================================== */}
+      {/* 4. Thermal receipt print-only view (Active when printing) */}
+      {/* ======================================================== */}
+      {receiptOrder && (
+        <div className="hidden print:block print-area font-mono text-black bg-white" dir="rtl">
+          {/* 1. Full Customer Invoice */}
+          <ReceiptLayout />
+
+          {/* 2. Physical Thermal Printer Auto-Cut Page Break */}
+          <div className="kot-page-break"></div>
+
+          {/* 3. Short Barista KOT Slip */}
+          <BaristaKotLayout />
+        </div>
+      )}
+    </>
   );
 }

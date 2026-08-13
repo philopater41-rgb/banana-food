@@ -156,22 +156,151 @@ body {
 .receipt-final-total td { font-size: 12px; font-weight: 900; }
 .receipt-footer { margin-top: 8px; border-top: 1px solid #000; padding-top: 6px; text-align: center; font-weight: 900; }
 
+/* Barista Short Receipt (KOT) Layout */
+.kot-layout {
+  color: #000;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  font-weight: 700;
+}
+.kot-layout * {
+  color: #000 !important;
+  font-weight: 700;
+}
+.kot-box {
+  border: 1px solid #000;
+  padding: 5px 4px;
+  text-align: center;
+  margin-bottom: -1px;
+}
+.kot-order-num {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  direction: ltr;
+}
+.kot-order-type {
+  font-size: 13px;
+  font-weight: 900;
+}
+.kot-cashier {
+  font-size: 10px;
+  font-weight: 700;
+}
+.kot-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0;
+  table-layout: fixed;
+}
+.kot-table th,
+.kot-table td {
+  border: 1px solid #000;
+  padding: 4px 3px;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.kot-table th {
+  background: #f1f1f1;
+  font-weight: 900;
+  text-align: center;
+}
+.kot-item-name-col {
+  width: 75%;
+  text-align: right;
+  font-weight: 700;
+}
+.kot-item-qty-col {
+  width: 25%;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+  direction: ltr;
+}
+.kot-footer-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid #000;
+  border-top: 0;
+}
+.kot-footer-cell {
+  padding: 4px 3px;
+  font-weight: 900;
+  text-align: center;
+  font-size: 11px;
+}
+.kot-footer-cell:first-child {
+  border-left: 1px solid #000;
+}
+.kot-divider {
+  border-top: 2px dashed #000;
+  margin: 18px 0 12px 0;
+  padding-top: 8px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 900;
+}
+.kot-page-break {
+  page-break-after: always !important;
+  break-after: page !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: block !important;
+}
+
 /* Print layout for receipts (KOT / Customer Invoice) */
 @media print {
-  body {
-    background: white !important;
-    color: black !important;
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 12px !important;
-    font-weight: 600 !important;
+  @page {
+    margin: 0 !important;
+    size: 76mm auto !important;
+  }
+  html, body {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, system-ui, -apple-system, sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: max-content !important;
+    overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+  .no-print,
+  .no-print * {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+  .print-area {
+    display: block !important;
+    width: 72mm !important; /* 72mm matches the exact thermal print head of 80mm printers like XP-80C */
+    max-width: 72mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 auto !important;
+    padding: 0 1mm 4mm 1mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
   }
   .print-area,
   .print-area * {
     color: #000 !important;
     border-color: #000 !important;
     opacity: 1 !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    box-sizing: border-box !important;
   }
   .print-area .font-bold,
   .print-area .font-black {
@@ -180,23 +309,23 @@ body {
   .print-area .border-dashed {
     border-color: #000 !important;
   }
-  .no-print {
-    display: none !important;
+  .print-area .receipt-layout { 
+    width: 100% !important;
+    font-size: 10px !important; 
   }
-  .print-area {
-    display: block !important;
-    width: 80mm !important; /* Standard 3-inch thermal printer width */
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-  .print-area .receipt-layout { font-size: 10px !important; }
-  .print-area .receipt-brand { font-size: 12px !important; padding: 5px 3px !important; }
-  .print-area .receipt-logo { width: 54px !important; height: 54px !important; }
+  .print-area .receipt-brand { font-size: 12px !important; padding: 4px 2px !important; }
+  .print-area .receipt-logo { width: 50px !important; height: 50px !important; }
   .print-area .receipt-layout th,
   .print-area .receipt-layout td { padding: 3px 2px !important; }
-  .print-area .receipt-items-table { margin-top: 5px !important; }
-  .print-area .receipt-totals-table { margin-top: 5px !important; }
-  .print-area .receipt-footer { margin-top: 6px !important; padding-top: 5px !important; }
+  .print-area .receipt-items-table { margin-top: 4px !important; }
+  .print-area .receipt-totals-table { margin-top: 4px !important; width: 65% !important; }
+  .print-area .receipt-footer { margin-top: 5px !important; padding-top: 4px !important; }
+  .print-area .kot-layout {
+    width: 100% !important;
+    font-size: 10px !important;
+  }
+  .print-area .kot-table th,
+  .print-area .kot-table td { padding: 3px 2px !important; }
 }
 
 /* Micro-animations */

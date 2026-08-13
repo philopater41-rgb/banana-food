@@ -45,10 +45,18 @@ export async function GET() {
       );
     }
 
+    // 4. Get count of today's orders to sync receipt numbering counter
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayOrdersCount = await prisma.salesOrder.count({
+      where: { createdAt: { gte: startOfToday } },
+    });
+
     return NextResponse.json({
       categories,
       modifiers,
       halls,
+      todayOrdersCount,
     });
   } catch (error: any) {
     console.error('POS init endpoint error:', error);

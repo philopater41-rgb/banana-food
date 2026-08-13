@@ -61,11 +61,22 @@ export async function POST(request: Request) {
 
         // 2. Wrap order insertion and stock deduction in a Prisma transaction
         await prisma.$transaction(async (tx) => {
+          // Resolve any duplicate receipt number collision safely
+          let finalReceiptNumber = order.receiptNumber;
+          if (finalReceiptNumber) {
+            const existingReceipt = await tx.salesOrder.findUnique({
+              where: { receiptNumber: finalReceiptNumber },
+            });
+            if (existingReceipt && existingReceipt.id !== order.id) {
+              finalReceiptNumber = `${finalReceiptNumber}-${order.id.slice(0, 4).toUpperCase()}`;
+            }
+          }
+
           // Create the sales order
           await tx.salesOrder.create({
             data: {
               id: order.id,
-              receiptNumber: order.receiptNumber,
+              receiptNumber: finalReceiptNumber,
               shiftId: order.shiftId,
               tableId: order.tableId || null,
               orderType: order.orderType,
