@@ -932,25 +932,55 @@ export default function AdminPage() {
                   {/* Owner reports: all recorded days, months, and shifts */}
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                     <div className="glass-panel rounded-2xl p-5 text-right">
-                      <h3 className="font-bold text-sm text-white">المبيعات حسب اليوم</h3>
+                      <div className="flex items-center justify-between flex-row-reverse">
+                        <h3 className="font-bold text-sm text-white">المبيعات حسب اليوم</h3>
+                        <span className="text-[10px] text-cyan-400 font-semibold animate-pulse">اضغط لعرض الفواتير ↗</span>
+                      </div>
                       <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
                         {dailySales.length ? dailySales.map((day) => (
-                          <div key={day.period} className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-xs flex-row-reverse">
-                            <span className="text-gray-300">{new Date(`${day.period}T12:00:00`).toLocaleDateString('ar-EG')}</span>
-                            <span className="font-bold text-cyan-400">EGP {day.total.toFixed(2)} <span className="font-normal text-gray-500">({day.orders} فاتورة)</span></span>
-                          </div>
+                          <button
+                            key={day.period}
+                            type="button"
+                            onClick={() => openPeriodOrders(day.period, `فواتير يوم: ${new Date(`${day.period}T12:00:00`).toLocaleDateString('ar-EG')}`, 'date')}
+                            className="w-full flex justify-between items-center rounded-xl bg-white/5 hover:bg-cyan-500/15 border border-white/5 hover:border-cyan-500/40 px-3.5 py-2.5 text-xs flex-row-reverse transition-all group text-right cursor-pointer"
+                          >
+                            <span className="text-gray-300 group-hover:text-white font-medium">
+                              {new Date(`${day.period}T12:00:00`).toLocaleDateString('ar-EG')}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-cyan-400 font-mono">EGP {day.total.toFixed(2)}</span>
+                              <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 group-hover:bg-cyan-500 group-hover:text-black font-semibold text-[10px] transition-all">
+                                {day.orders} فاتورة ↗
+                              </span>
+                            </div>
+                          </button>
                         )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد مبيعات مسجلة.</p>}
                       </div>
                     </div>
 
                     <div className="glass-panel rounded-2xl p-5 text-right">
-                      <h3 className="font-bold text-sm text-white">المبيعات حسب الشهر</h3>
+                      <div className="flex items-center justify-between flex-row-reverse">
+                        <h3 className="font-bold text-sm text-white">المبيعات حسب الشهر</h3>
+                        <span className="text-[10px] text-purple-400 font-semibold animate-pulse">اضغط لعرض الفواتير ↗</span>
+                      </div>
                       <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
                         {monthlySalesHistory.length ? monthlySalesHistory.map((month) => (
-                          <div key={month.period} className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-xs flex-row-reverse">
-                            <span className="text-gray-300">{new Date(`${month.period}-01T12:00:00`).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' })}</span>
-                            <span className="font-bold text-purple-400">EGP {month.total.toFixed(2)} <span className="font-normal text-gray-500">({month.orders} فاتورة)</span></span>
-                          </div>
+                          <button
+                            key={month.period}
+                            type="button"
+                            onClick={() => openPeriodOrders(month.period, `فواتير شهر: ${new Date(`${month.period}-01T12:00:00`).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' })}`, 'month')}
+                            className="w-full flex justify-between items-center rounded-xl bg-white/5 hover:bg-purple-500/15 border border-white/5 hover:border-purple-500/40 px-3.5 py-2.5 text-xs flex-row-reverse transition-all group text-right cursor-pointer"
+                          >
+                            <span className="text-gray-300 group-hover:text-white font-medium">
+                              {new Date(`${month.period}-01T12:00:00`).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' })}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-purple-400 font-mono">EGP {month.total.toFixed(2)}</span>
+                              <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 group-hover:bg-purple-500 group-hover:text-black font-semibold text-[10px] transition-all">
+                                {month.orders} فاتورة ↗
+                              </span>
+                            </div>
+                          </button>
                         )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد مبيعات مسجلة.</p>}
                       </div>
                     </div>
@@ -965,8 +995,14 @@ export default function AdminPage() {
                               <span className={shift.closedAt ? 'text-gray-400' : 'text-emerald-400'}>{shift.closedAt ? 'مقفلة' : 'مفتوحة'}</span>
                             </div>
                             <p className="mt-1 text-gray-400">{new Date(shift.openedAt).toLocaleString('ar-EG')}</p>
-                            <div className="mt-1 flex justify-between flex-row-reverse">
-                              <span className="text-gray-400">{shift.orderCount} فاتورة</span>
+                            <div className="mt-1 flex justify-between items-center flex-row-reverse">
+                              <button
+                                type="button"
+                                onClick={() => openPeriodOrders(shift.id, `فواتير وردية: ${shift.cashierName} (${new Date(shift.openedAt).toLocaleDateString('ar-EG')})`, 'shift')}
+                                className="px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500 text-cyan-300 hover:text-black text-[10px] font-bold transition-all cursor-pointer"
+                              >
+                                {shift.orderCount} فاتورة ↗
+                              </button>
                               <span className="font-bold text-cyan-400">EGP {shift.totalSales.toFixed(2)}</span>
                             </div>
                             <p className="mt-1 text-[10px] text-gray-500">كاش {shift.cashSales.toFixed(2)} · إنستا باي {shift.instaPaySales.toFixed(2)}</p>
