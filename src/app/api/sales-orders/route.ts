@@ -8,34 +8,36 @@ export async function GET(request: Request) {
     const monthStr = searchParams.get('month'); // e.g. "2026-08"
     const shiftId = searchParams.get('shiftId');
 
+    const cairoDateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+
+    const getBusinessDateStr = (date: Date, monthly = false) => {
+      const parts = Object.fromEntries(
+        cairoDateParts
+          .formatToParts(date)
+          .filter((part) => part.type !== 'literal')
+          .map((part) => [part.type, part.value])
+      );
+      return monthly ? `${parts.year}-${parts.month}` : `${parts.year}-${parts.month}-${parts.day}`;
+    };
+
     let whereClause: any = {
       status: 'COMPLETED',
     };
 
     if (shiftId) {
       whereClause.shiftId = shiftId;
-    } else if (dateStr) {
-      // Date in Africa/Cairo timezone or UTC bounds
-      const startOfDay = new Date(`${dateStr}T00:00:00.000+03:00`);
-      const endOfDay = new Date(`${dateStr}T23:59:59.999+03:00`);
-      whereClause.createdAt = {
-        gte: startOfDay,
-        lte: endOfDay,
-      };
-    } else if (monthStr) {
-      const [year, month] = monthStr.split('-').map(Number);
-      const startOfMonth = new Date(year, month - 1, 1, 0, 0, 0);
-      const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
-      whereClause.createdAt = {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      };
     }
 
-    const orders = await prisma.salesOrder.findMany({
+    const allOrders = await prisma.salesOrder.findMany({
       where: whereClause,
       orderBy: { createdAt: 'desc' },
       include: {
+        shift: { select: { id: true, openedAt: true } },
         table: { select: { name: true } },
         items: {
           include: {
@@ -47,6 +49,20 @@ export async function GET(request: Request) {
         },
       },
     });
+
+    // Filter by shift operating date if dateStr or monthStr is provided
+    let orders = allOrders;
+    if (dateStr) {
+      orders = allOrders.filter((order) => {
+        const opDate = order.shift?.openedAt || order.createdAt;
+        return getBusinessDateStr(opDate, false) === dateStr;
+      });
+    } else if (monthStr) {
+      orders = allOrders.filter((order) => {
+        const opDate = order.shift?.openedAt || order.createdAt;
+        return getBusinessDateStr(opDate, true) === monthStr;
+      });
+    }
 
     return NextResponse.json({ orders });
   } catch (error) {
