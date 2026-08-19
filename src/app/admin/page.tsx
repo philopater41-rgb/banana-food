@@ -67,6 +67,16 @@ interface RestockLog {
 }
 interface AttendanceRecord { id: string; employeeName: string; checkedInAt: string; checkedOutAt: string | null; }
 
+interface CashTransactionItem {
+  id: string;
+  shiftId: string;
+  type: string;
+  amount: number;
+  reason: string;
+  createdAt: string;
+  cashierName: string;
+}
+
 interface OrderDetails extends RecentOrder {
   subtotal: number;
   discount: number;
@@ -141,6 +151,11 @@ export default function AdminPage() {
   const [loadingOrderDetails, setLoadingOrderDetails] = useState(false);
   const inventoryTableScrollRef = useRef<HTMLDivElement>(null);
   const [dailySales, setDailySales] = useState<SalesSummary[]>([]);
+  const [showPeriodOrders, setShowPeriodOrders] = useState(false);
+  const [periodOrdersTitle, setPeriodOrdersTitle] = useState('');
+  const [periodOrders, setPeriodOrders] = useState<any[]>([]);
+  const [loadingPeriodOrders, setLoadingPeriodOrders] = useState(false);
+  const [periodOrderSearch, setPeriodOrderSearch] = useState('');
   const [monthlySalesHistory, setMonthlySalesHistory] = useState<SalesSummary[]>([]);
   const [shiftSummaries, setShiftSummaries] = useState<ShiftSummary[]>([]);
   
@@ -270,6 +285,26 @@ export default function AdminPage() {
       setMonthlyRestockTotal(data.monthlyTotal || 0);
     } catch (error) { console.error(error); }
   }, []);
+
+  const openPeriodOrders = async (period: string, title: string, type: 'date' | 'month' | 'shift' = 'date') => {
+    setPeriodOrdersTitle(title);
+    setShowPeriodOrders(true);
+    setLoadingPeriodOrders(true);
+    setPeriodOrders([]);
+    setPeriodOrderSearch('');
+
+    try {
+      const paramKey = type === 'date' ? 'date' : type === 'month' ? 'month' : 'shiftId';
+      const res = await fetch(`/api/sales-orders?${paramKey}=${encodeURIComponent(period)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشل تحميل فواتير هذه الفترة');
+      setPeriodOrders(data.orders || []);
+    } catch (error: any) {
+      triggerAlert('error', error.message || 'فشل تحميل الفواتير');
+    } finally {
+      setLoadingPeriodOrders(false);
+    }
+  };
 
   const openOrderDetails = async (orderId: string) => {
     setShowOrderDetails(true);
@@ -1421,6 +1456,155 @@ export default function AdminPage() {
                 {submitLoading ? 'جاري إضافة الصنف...' : 'إضافة الصنف'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* PERIOD / DAY INVOICES LIST MODAL */}
+      {showPeriodOrders && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-md" onClick={() => setShowPeriodOrders(false)}>
+          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
+            <button 
+              onClick={() => setShowPeriodOrders(false)} 
+              className="absolute top-4 left-4 p-1.5 rounded-lg bg-white/5 text-gray-400 hover:text-white transition-all" 
+              aria-label="إغلاق"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Header */}
+            <div className="border-b border-white/10 pb-4 mb-4">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <span>{periodOrdersTitle}</span>
+              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs">
+                <p className="text-gray-400">
+                  إجمالي عدد الفواتير: <span className="font-bold text-cyan-400 font-mono">{periodOrders.length}</span> فاتورة
+                </p>
+                <p className="text-gray-400">
+                  إجمالي المبلغ: <span className="font-bold text-emerald-400 font-mono text-sm">EGP {periodOrders.reduce((sum, ord) => sum + ord.total, 0).toFixed(2)}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Search filter in day's orders */}
+            <div className="mb-4">
+              <input
+                type="text"
+                value={periodOrderSearch}
+                onChange={(e) => setPeriodOrderSearch(e.target.value)}
+                placeholder="بحث برقم الفاتورة أو نوع الدفع أو الصالة..."
+                className="w-full bg-slate-900/80 border border-white/10 rounded-xl py-2 px-3.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
+              />
+            </div>
+
+            {/* Invoices Table */}
+            <div className="flex-1 overflow-y-auto min-h-0 border border-white/5 rounded-xl">
+              {loadingPeriodOrders ? (
+                <div className="h-60 flex items-center justify-center gap-2 text-sm text-gray-400">
+                  <RefreshCw className="w-5 h-5 animate-spin text-cyan-400" />
+                  <span>جاري تحميل فواتير اليوم...</span>
+                </div>
+              ) : (
+                <table className="w-full text-right text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                      <th className="p-3">رقم الفاتورة</th>
+                      <th className="p-3">الوقت</th>
+                      <th className="p-3">النوع</th>
+                      <th className="p-3">طريقة الدفع</th>
+                      <th className="p-3">الخصم</th>
+                      <th className="p-3">الإجمالي</th>
+                      <th className="p-3 text-center">التفاصيل</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {periodOrders
+                      .filter((ord) => {
+                        if (!periodOrderSearch.trim()) return true;
+                        const q = periodOrderSearch.toLowerCase();
+                        const num = (ord.receiptNumber || ord.id).toLowerCase();
+                        const type = ord.orderType === 'DINE_IN' ? 'صالة' : 'تيك اواي تيك أواي';
+                        const pay = ord.paymentMethod === 'CASH' ? 'كاش' : 'انستا باي إنستا';
+                        return num.includes(q) || type.includes(q) || pay.includes(q);
+                      })
+                      .length ? (
+                      periodOrders
+                        .filter((ord) => {
+                          if (!periodOrderSearch.trim()) return true;
+                          const q = periodOrderSearch.toLowerCase();
+                          const num = (ord.receiptNumber || ord.id).toLowerCase();
+                          const type = ord.orderType === 'DINE_IN' ? 'صالة' : 'تيك اواي تيك أواي';
+                          const pay = ord.paymentMethod === 'CASH' ? 'كاش' : 'انستا باي إنستا';
+                          return num.includes(q) || type.includes(q) || pay.includes(q);
+                        })
+                        .map((ord) => (
+                          <tr
+                            key={ord.id}
+                            onClick={() => openOrderDetails(ord.id)}
+                            className="border-b border-white/5 hover:bg-cyan-500/10 text-gray-300 transition-colors cursor-pointer"
+                          >
+                            <td className="p-3 font-mono font-bold text-cyan-400">
+                              {ord.receiptNumber || ord.id.slice(0, 8)}
+                            </td>
+                            <td className="p-3 font-mono text-gray-400">
+                              {new Date(ord.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                ord.orderType === 'DINE_IN' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-amber-500/10 text-amber-400'
+                              }`}>
+                                {ord.orderType === 'DINE_IN' ? `صالة (${ord.table?.name || 'طاولة'})` : 'تيك أواي'}
+                              </span>
+                            </td>
+                            <td className="p-3 font-bold text-[10px]">
+                              {ord.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}
+                            </td>
+                            <td className="p-3">
+                              {ord.discount > 0 ? (
+                                <span className="text-rose-400 font-bold font-mono text-[11px]">- EGP {ord.discount.toFixed(2)}</span>
+                              ) : (
+                                <span className="text-gray-600">-</span>
+                              )}
+                            </td>
+                            <td className="p-3 font-bold font-mono text-white text-sm">
+                              EGP {ord.total.toFixed(2)}
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openOrderDetails(ord.id);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20 text-[10px] font-bold transition-all"
+                              >
+                                عرض الأصناف
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-gray-500 text-xs">
+                          لا توجد فواتير مطابقة للبحث.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-white/5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPeriodOrders(false)}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold transition-all"
+              >
+                إغلاق
+              </button>
+            </div>
           </div>
         </div>
       )}

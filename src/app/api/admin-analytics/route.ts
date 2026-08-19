@@ -7,7 +7,7 @@ export async function GET() {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    // 1. Calculate Today's Sales
+    // 1. Calculate Today's Sales & Combined Expenses
     const todayOrders = await prisma.salesOrder.findMany({
       where: {
         status: 'COMPLETED',
@@ -18,11 +18,14 @@ export async function GET() {
     });
 
     const todaySales = todayOrders.reduce((sum, order) => sum + order.total, 0);
-    const todayRestock = await prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } });
-    const todayExpenses = todayRestock._sum.amount || 0;
+    const [todayRestock, todayCashPayouts] = await Promise.all([
+      prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } }),
+      prisma.cashTransaction.aggregate({ where: { createdAt: { gte: startOfToday }, type: 'PAYOUT' }, _sum: { amount: true } }),
+    ]);
+    const todayExpenses = (todayRestock._sum.amount || 0) + (todayCashPayouts._sum.amount || 0);
     const todayNet = todaySales - todayExpenses;
 
-    // 2. Calculate Monthly Sales
+    // 2. Calculate Monthly Sales & Combined Expenses
     const monthOrders = await prisma.salesOrder.findMany({
       where: {
         status: 'COMPLETED',
@@ -33,8 +36,11 @@ export async function GET() {
     });
 
     const monthlySales = monthOrders.reduce((sum, order) => sum + order.total, 0);
-    const monthlyRestock = await prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfMonth } }, _sum: { amount: true } });
-    const monthlyExpenses = monthlyRestock._sum.amount || 0;
+    const [monthlyRestock, monthlyCashPayouts] = await Promise.all([
+      prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfMonth } }, _sum: { amount: true } }),
+      prisma.cashTransaction.aggregate({ where: { createdAt: { gte: startOfMonth }, type: 'PAYOUT' }, _sum: { amount: true } }),
+    ]);
+    const monthlyExpenses = (monthlyRestock._sum.amount || 0) + (monthlyCashPayouts._sum.amount || 0);
     const monthlyNet = monthlySales - monthlyExpenses;
 
     // 3. Active Shift Info
@@ -55,7 +61,6 @@ export async function GET() {
     }
 
     // 5. Top Selling Items (Today)
-    // We group sales by Item using raw count.
     const orderItems = await prisma.salesOrderItem.findMany({
       where: {
         order: {
@@ -85,15 +90,16 @@ export async function GET() {
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 5);
 
-    const summarizeTopItems = (orderItems: Array<{ itemId: string; qty: number; totalPrice: number; item: { name: string } }>) => {
+    const summarizeTopItems = (orderItemsList: Array<{ itemId: string; qty: number; totalPrice: number; item: { name: string } }>) => {
       const summary: { [key: string]: { name: string; qty: number; total: number } } = {};
-      for (const orderItem of orderItems) {
+      for (const orderItem of orderItemsList) {
         if (!summary[orderItem.itemId]) summary[orderItem.itemId] = { name: orderItem.item.name, qty: 0, total: 0 };
         summary[orderItem.itemId].qty += orderItem.qty;
         summary[orderItem.itemId].total += orderItem.totalPrice;
       }
       return Object.values(summary).sort((a, b) => b.qty - a.qty).slice(0, 5);
     };
+
     const [monthOrderItems, allOrderItems] = await Promise.all([
       prisma.salesOrderItem.findMany({
         where: { order: { status: 'COMPLETED', createdAt: { gte: startOfMonth } } },
@@ -139,7 +145,7 @@ export async function GET() {
       },
     });
 
-    // 8. Historical summaries for the owner: every sales day, month, and shift.
+    // 8. Historical summaries for the owner
     const historicalOrders = await prisma.salesOrder.findMany({
       where: { status: 'COMPLETED' },
       select: { createdAt: true, total: true },
@@ -167,6 +173,8 @@ export async function GET() {
       }
       return [...summaries.values()].sort((a, b) => b.period.localeCompare(a.period));
     };
+
+    // 9. Shift Summaries
     const shifts = await prisma.shift.findMany({
       orderBy: { openedAt: 'desc' },
       include: {
@@ -192,6 +200,20 @@ export async function GET() {
         varianceCash: shift.varianceCash,
         varianceInstaPay: shift.varianceInstaPay,
       };
+    });
+
+    // 10. Cash Transactions / Expenses Log
+    const cashTransactions = await prisma.cashTransaction.findMany({
+      take: 100,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        shift: {
+          select: {
+            cashierName: true,
+            user: { select: { name: true } },
+          },
+        },
+      },
     });
 
     return NextResponse.json({
@@ -220,6 +242,15 @@ export async function GET() {
       dailySales: summarizeOrders(),
       monthlySalesHistory: summarizeOrders(true),
       shiftSummaries,
+      cashTransactions: cashTransactions.map((tx) => ({
+        id: tx.id,
+        shiftId: tx.shiftId,
+        type: tx.type,
+        amount: tx.amount,
+        reason: tx.reason,
+        createdAt: tx.createdAt,
+        cashierName: tx.shift?.cashierName || tx.shift?.user?.name || 'كاشير',
+      })),
     });
   } catch (error: any) {
     console.error('GET admin analytics error:', error);
