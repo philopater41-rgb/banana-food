@@ -5,25 +5,21 @@ declare global {
 }
 
 function getPrismaClient(): PrismaClient {
-  const dbUrl = process.env.DATABASE_URL || 'file:dev.db';
+  const dbUrl =
+    process.env.DATABASE_URL ||
+    'postgresql://neondb_owner:npg_0tHMzIkiAY5b@ep-summer-cell-b4jzgno1-pooler.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require';
 
-  if (dbUrl.startsWith('postgresql:') || dbUrl.startsWith('postgres:')) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { PrismaNeon } = require('@prisma/adapter-neon');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { neonConfig } = require('@neondatabase/serverless');
+
+  if (typeof WebSocket === 'undefined') {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { PrismaNeon } = require('@prisma/adapter-neon');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { neonConfig } = require('@neondatabase/serverless');
-    if (typeof WebSocket === 'undefined') {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      neonConfig.webSocketConstructor = require('ws');
-    }
-    const adapter = new PrismaNeon({ connectionString: dbUrl });
-    return new PrismaClient({ adapter });
+    neonConfig.webSocketConstructor = require('ws');
   }
 
-  // SQLite / Local using LibSQL adapter
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { PrismaLibSql } = require('@prisma/adapter-libsql');
-  const adapter = new PrismaLibSql({ url: dbUrl });
+  const adapter = new PrismaNeon({ connectionString: dbUrl });
   return new PrismaClient({ adapter });
 }
 
