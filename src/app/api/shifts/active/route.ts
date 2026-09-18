@@ -11,10 +11,58 @@ export async function GET() {
           select: { id: true, name: true, username: true, role: true },
         },
         transactions: true,
+        orders: true,
       },
     });
 
-    return NextResponse.json({ activeShift });
+    if (!activeShift) {
+      return NextResponse.json({ activeShift: null });
+    }
+
+    let salesCash = 0;
+    let salesInstaPay = 0;
+    let salesVisa = 0;
+    let salesVodafoneCash = 0;
+    let salesCashOut = 0;
+    let visaCashOutReceived = 0;
+
+    for (const order of activeShift.orders) {
+      if (order.status === 'CANCELLED') continue;
+      if (order.paymentMethod === 'CASH') {
+        salesCash += order.total;
+      } else if (order.paymentMethod === 'INSTAPAY') {
+        salesInstaPay += order.total;
+      } else if (order.paymentMethod === 'VISA') {
+        salesVisa += order.total;
+      } else if (order.paymentMethod === 'VODAFONE_CASH') {
+        salesVodafoneCash += order.total;
+      } else if (order.paymentMethod === 'CASH_OUT') {
+        const handedCash = order.cashOutAmount || order.total;
+        salesCashOut += handedCash;
+        visaCashOutReceived += order.total;
+      }
+    }
+
+    let cashTxImpact = 0;
+    for (const tx of activeShift.transactions) {
+      // Include all cash movements: deposits, expenses, and customer refund payouts
+      if (tx.type === 'PAYIN') {
+        cashTxImpact += tx.amount;
+      } else if (tx.type === 'PAYOUT') {
+        cashTxImpact -= tx.amount;
+      }
+    }
+
+    const resultShift = {
+      ...activeShift,
+      expectedCash: Math.max(0, activeShift.floatCash + salesCash - salesCashOut + cashTxImpact),
+      expectedInstaPay: salesInstaPay,
+      expectedVisa: salesVisa + visaCashOutReceived,
+      expectedVodafoneCash: salesVodafoneCash,
+      expectedCashOut: salesCashOut,
+    };
+
+    return NextResponse.json({ activeShift: resultShift });
   } catch (error: any) {
     console.error('GET active shift error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

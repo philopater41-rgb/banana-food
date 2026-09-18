@@ -43,7 +43,7 @@ async function main() {
     data: {
       username: 'admin',
       password: adminPassword,
-      name: 'Day & Night Owner',
+      name: 'إدارة BANANA FOOD',
       role: 'ADMIN',
     },
   });

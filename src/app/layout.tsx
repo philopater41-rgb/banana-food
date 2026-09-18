@@ -13,8 +13,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Day & Night | Cloud POS & ERP",
-  description: "Advanced Offline-First POS & Inventory ERP System for Day & Night Cafe",
+  title: "بانانا فود | Banana Food POS",
+  description: "نظام كاشير وإدارة محل خضار وفاكهة بانانا فود",
 };
 
 export default function RootLayout({
@@ -23,14 +23,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${outfit.variable} ${inter.variable} h-full antialiased`}>
+    <html lang="en" className={`${outfit.variable} ${inter.variable} h-full antialiased`} suppressHydrationWarning>
       <head>
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#090d16" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>
-      <body className="min-h-full flex flex-col bg-[#090d16] text-[#f3f4f6]">
+      <body className="min-h-full flex flex-col bg-[#090d16] text-[#f3f4f6]" suppressHydrationWarning>
         {children}
       </body>
     </html>

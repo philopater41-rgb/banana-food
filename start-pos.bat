@@ -1,9 +1,9 @@
 @echo off
-title Day ^& Night POS Launcher
+title BANANA FOOD POS Launcher
 cd /d "%~dp0"
 
 echo ====================================================
-echo      Day ^& Night POS - Starting Application
+echo      BANANA FOOD POS - Starting Application
 echo ====================================================
 echo.
 
@@ -21,6 +21,6 @@ timeout /t 5 /nobreak >nul
 
 :: 4. Open POS in Kiosk Printing mode with dedicated profile (guarantees silent instant printing without preview dialog)
 echo [+] Opening POS application window with Silent Thermal Printing...
-start msedge --kiosk-printing --user-data-dir="%LOCALAPPDATA%\DayNightPOS\edge-pos-profile" --app=http://localhost:3000 2>nul || start chrome --kiosk-printing --user-data-dir="%LOCALAPPDATA%\DayNightPOS\chrome-pos-profile" --app=http://localhost:3000 2>nul || start http://localhost:3000
+start msedge --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\edge-pos-profile" --app=http://localhost:3000 2>nul || start chrome --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\chrome-pos-profile" --app=http://localhost:3000 2>nul || start http://localhost:3000
 
 exit

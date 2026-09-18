@@ -82,10 +82,16 @@ body {
 }
 .receipt-logo {
   display: block;
-  width: 62px;
-  height: 62px;
-  margin: -4px auto 0;
+  width: 78px;
+  height: 78px;
+  margin: 0 auto;
   object-fit: contain;
+}
+.receipt-discount-reason-row th,
+.receipt-discount-reason-row td {
+  font-size: 10px !important;
+  color: #000 !important;
+  background-color: #f9f9f9;
 }
 .receipt-layout table {
   width: 100%;
@@ -137,15 +143,28 @@ body {
   overflow-wrap: anywhere;
 }
 .receipt-number { direction: ltr; font-size: 10px; font-weight: 900; letter-spacing: -0.2px; white-space: nowrap; }
-.receipt-items-table { margin-top: 7px; }
-.receipt-items-table th { background: #f1f1f1; font-weight: 900; text-align: center; }
-.receipt-item-name { width: 46%; }
+.receipt-items-table { margin-top: 7px; width: 100%; border-collapse: collapse; table-layout: fixed; }
+.receipt-items-table th { background: #f1f1f1; font-weight: 900; text-align: center; direction: rtl; font-size: 10px; padding: 4px 2px; }
+.receipt-item-name { width: 44%; }
 .receipt-item-price { width: 18%; }
-.receipt-item-qty { width: 16%; }
+.receipt-item-qty { width: 18%; }
 .receipt-item-total { width: 20%; }
-.receipt-items-table th:not(:first-child),
-.receipt-items-table td:not(:first-child) { text-align: center; direction: ltr; white-space: nowrap; }
-.receipt-items-table td:first-child { font-weight: 700; }
+.receipt-items-table th:not(:first-child) { text-align: center; direction: rtl; }
+.receipt-items-table td:not(:first-child) { text-align: center; white-space: nowrap; font-size: 10px; }
+.receipt-items-table td.receipt-qty-cell,
+.receipt-items-table td:nth-child(3) { 
+  direction: rtl !important; 
+  text-align: center !important; 
+}
+.receipt-qty-content {
+  display: inline-flex;
+  flex-direction: row;
+  direction: rtl;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+.receipt-items-table td:first-child { font-weight: 700; text-align: right; }
 .receipt-addition { display: block; margin-top: 2px; font-size: 9px; font-weight: 600; }
 .receipt-booking-name { font-weight: 900; }
 .receipt-totals-table { width: 55% !important; margin-top: 7px; margin-right: auto; }
@@ -250,49 +269,79 @@ body {
   display: block !important;
 }
 
-/* Print layout for receipts (KOT / Customer Invoice) */
+/* Print layout for receipts (Banana Food Customer Invoice & Thermal Rolls) */
 @media print {
   @page {
     margin: 0 !important;
-    size: 76mm auto !important;
+    size: auto;
   }
+
+  *, *::before, *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
   html, body {
     background: #ffffff !important;
     background-color: #ffffff !important;
     color: #000000 !important;
-    font-family: 'Courier New', Courier, system-ui, -apple-system, sans-serif !important;
-    font-size: 11px !important;
+    font-family: 'Courier New', Courier, monospace, system-ui, sans-serif !important;
+    font-size: 10px !important;
     font-weight: 700 !important;
     margin: 0 !important;
     padding: 0 !important;
     width: 100% !important;
+    max-width: 100% !important;
     height: auto !important;
     min-height: 0 !important;
-    max-height: max-content !important;
+    max-height: none !important;
+    display: block !important;
+    position: static !important;
     overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
+
   .no-print,
   .no-print * {
     display: none !important;
     visibility: hidden !important;
     height: 0 !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
     overflow: hidden !important;
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
   }
+
   .print-area {
     display: block !important;
-    width: 72mm !important; /* 72mm matches the exact thermal print head of 80mm printers like XP-80C */
-    max-width: 72mm !important;
+    width: 72mm !important; /* 72mm matches the exact thermal print head of 80mm printers */
+    max-width: 100% !important;
     height: auto !important;
     min-height: 0 !important;
+    max-height: none !important;
     margin: 0 auto !important;
-    padding: 0 1mm 4mm 1mm !important;
+    padding: 0 1mm 1mm 1mm !important;
     box-sizing: border-box !important;
     background: #ffffff !important;
     color: #000000 !important;
     overflow: visible !important;
+    page-break-before: avoid !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-before: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
   }
+
   .print-area,
   .print-area * {
     color: #000 !important;
@@ -302,28 +351,127 @@ body {
     background-color: #ffffff !important;
     box-sizing: border-box !important;
   }
+
   .print-area .font-bold,
   .print-area .font-black {
     font-weight: 900 !important;
   }
+
   .print-area .border-dashed {
     border-color: #000 !important;
   }
+
   .print-area .receipt-layout { 
     width: 100% !important;
-    font-size: 10px !important; 
+    font-size: 9.5px !important;
+    line-height: 1.3 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
-  .print-area .receipt-brand { font-size: 12px !important; padding: 4px 2px !important; }
-  .print-area .receipt-logo { width: 50px !important; height: 50px !important; }
+
+  .print-area .receipt-brand { 
+    font-size: 11.5px !important; 
+    padding: 3px 2px !important; 
+    border: 1px solid #000 !important;
+    border-bottom: 0 !important;
+  }
+
+  .print-area .receipt-logo { 
+    width: 58px !important; 
+    height: 58px !important; 
+    margin: 0 auto 2px auto !important; 
+    display: block !important; 
+    object-fit: contain !important;
+  }
+
+  .print-area .receipt-meta-grid {
+    border: 1px solid #000 !important;
+    border-top: 0 !important;
+  }
+
+  .print-area .receipt-meta-cell span,
+  .print-area .receipt-meta-wide span {
+    font-size: 8.5px !important;
+    padding: 2px 2px !important;
+  }
+
+  .print-area .receipt-meta-cell strong,
+  .print-area .receipt-meta-wide strong {
+    font-size: 9px !important;
+    padding: 2px 2px !important;
+  }
+
   .print-area .receipt-layout th,
-  .print-area .receipt-layout td { padding: 3px 2px !important; }
-  .print-area .receipt-items-table { margin-top: 4px !important; }
-  .print-area .receipt-totals-table { margin-top: 4px !important; width: 65% !important; }
-  .print-area .receipt-footer { margin-top: 5px !important; padding-top: 4px !important; }
+  .print-area .receipt-layout td { 
+    padding: 2.5px 2px !important; 
+    font-size: 9px !important;
+    border: 1px solid #000 !important;
+  }
+
+  .print-area .receipt-qty-cell,
+  .print-area .receipt-items-table td:nth-child(3) {
+    direction: rtl !important;
+    text-align: center !important;
+  }
+
+  .print-area .receipt-qty-content {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    direction: rtl !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 3px !important;
+  }
+
+  .print-area .receipt-items-table { 
+    margin-top: 3px !important; 
+    border-collapse: collapse !important;
+  }
+
+  .print-area .receipt-items-table th {
+    font-size: 9px !important;
+    padding: 2.5px 1px !important;
+  }
+
+  .print-area .receipt-items-table tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-area .receipt-totals-table { 
+    margin-top: 3px !important; 
+    width: 68% !important; 
+    margin-right: auto !important;
+    margin-left: 0 !important;
+    border-collapse: collapse !important;
+  }
+
+  .print-area .receipt-totals-table th,
+  .print-area .receipt-totals-table td {
+    padding: 2.5px 2px !important;
+    font-size: 9.5px !important;
+  }
+
+  .print-area .receipt-footer { 
+    margin-top: 4px !important; 
+    padding-top: 3px !important; 
+    padding-bottom: 2mm !important;
+    border-top: 1px dashed #000 !important;
+    font-size: 9px !important;
+    text-align: center !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
   .print-area .kot-layout {
     width: 100% !important;
     font-size: 10px !important;
   }
+
   .print-area .kot-table th,
   .print-area .kot-table td { padding: 3px 2px !important; }
 }

@@ -1,13 +1,13 @@
-# Day & Night POS - Automated installer script for client machines.
+# BANANA FOOD POS - Automated installer script for client machines.
 # Run install-cafe-pos.bat by double-clicking it.
 
 $ErrorActionPreference = 'Stop'
-$appRoot = Join-Path $env:LOCALAPPDATA 'DayNightPOS'
+$appRoot = Join-Path $env:LOCALAPPDATA 'BananaFoodPOS'
 $appPath = Join-Path $appRoot 'app'
-$zipPath = Join-Path $env:TEMP 'day-night-pos-main.zip'
-$extractPath = Join-Path $env:TEMP 'day-night-pos-extract'
-$repoZip = 'https://github.com/philopater41-rgb/day-night/archive/refs/heads/main.zip'
-$localPackage = Join-Path $PSScriptRoot 'day-night-pos-package.zip'
+$zipPath = Join-Path $env:TEMP 'banana-food-pos-main.zip'
+$extractPath = Join-Path $env:TEMP 'banana-food-pos-extract'
+$repoZip = ''
+$localPackage = Join-Path $PSScriptRoot 'banana-food-pos-package.zip'
 $bundledEnvFile = Join-Path $PSScriptRoot '.env'
 $bundledIconFile = Join-Path $PSScriptRoot 'day-night-pos.ico'
 
@@ -38,7 +38,7 @@ function Get-NodeCommand {
 }
 
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "  Day & Night POS - Client Computer Installation" -ForegroundColor Yellow
+Write-Host "  BANANA FOOD POS - Client Computer Installation" -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
 
 # 1. Ensure Node.js is installed
@@ -139,16 +139,16 @@ try {
 
 # 5. Create Desktop Launcher & Launcher script
 Write-Step 'Creating Desktop Shortcut...'
-$launcher = Join-Path $appRoot 'Open Day & Night POS.cmd'
+$launcher = Join-Path $appRoot 'Open BANANA FOOD POS.cmd'
 @"
 @echo off
 cd /d "$appPath"
-start "Day & Night POS Server" /min cmd /c "npm.cmd start"
+start "BANANA FOOD POS Server" /min cmd /c "npm.cmd start"
 timeout /t 3 /nobreak >nul
 start msedge --kiosk-printing --app=http://localhost:3000 2>nul || start chrome --kiosk-printing --app=http://localhost:3000 2>nul || start http://localhost:3000
 "@ | Set-Content -LiteralPath $launcher -Encoding ascii
 
-$desktopLauncher = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Day & Night POS.lnk'
+$desktopLauncher = Join-Path ([Environment]::GetFolderPath('Desktop')) 'BANANA FOOD POS.lnk'
 if (Test-Path $bundledIconFile) {
   $installedIcon = Join-Path $appPath 'day-night-pos.ico'
   Copy-Item -LiteralPath $bundledIconFile -Destination $installedIcon -Force
@@ -160,12 +160,12 @@ if (Test-Path $bundledIconFile) {
   $shortcut.IconLocation = "$installedIcon,0"
   $shortcut.Save()
 } else {
-  Copy-Item -LiteralPath $launcher -Destination (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Day & Night POS.cmd') -Force
+  Copy-Item -LiteralPath $launcher -Destination (Join-Path ([Environment]::GetFolderPath('Desktop')) 'BANANA FOOD POS.cmd') -Force
 }
 
 Write-Host "`n====================================================" -ForegroundColor Green
 Write-Host "  Installation Completed Successfully!" -ForegroundColor Green
-Write-Host "  Double-click the 'Day & Night POS' icon on your Desktop." -ForegroundColor Green
+Write-Host "  Double-click the 'BANANA FOOD POS' icon on your Desktop." -ForegroundColor Green
 Write-Host "====================================================" -ForegroundColor Green
 
 & $launcher

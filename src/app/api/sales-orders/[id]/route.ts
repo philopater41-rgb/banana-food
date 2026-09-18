@@ -10,12 +10,14 @@ export async function GET(
     const order = await prisma.salesOrder.findUnique({
       where: { id },
       include: {
+        shift: { select: { id: true, cashierName: true, openedAt: true, user: { select: { name: true } } } },
         table: { select: { name: true } },
+        customer: { select: { name: true, phone: true } },
         items: {
           include: {
-            item: { select: { name: true } },
+            item: { select: { id: true, name: true, price: true } },
             modifiers: {
-              include: { modifier: { select: { name: true } } },
+              include: { modifier: { select: { id: true, name: true, priceImpact: true } } },
             },
           },
         },

@@ -4,6 +4,7 @@ datasource db {
 
 generator client {
   provider = "prisma-client-js"
+  engineType = "library"
 }
 
 // 1. Security & User Roles
@@ -30,14 +31,19 @@ model Category {
 }
 
 model Item {
-  id          String   @id @default(uuid())
-  name        String
-  price       Float
-  isActive    Boolean  @default(true)
-  categoryId  String
-  category    Category @relation(fields: [categoryId], references: [id])
-  recipe      Recipe[]
-  orderItems  SalesOrderItem[]
+  id            String   @id @default(uuid())
+  name          String
+  price         Float
+  cost          Float    @default(0.0)
+  stockQty      Float    @default(0.0)
+  minStockLevel Float    @default(0.0)
+  unit          String   @default("كجم")
+  isActive      Boolean  @default(true)
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id])
+  recipe        Recipe[]
+  orderItems    SalesOrderItem[]
+  returnItems   OrderReturnItem[]
 }
 
 model Modifier {
@@ -51,19 +57,21 @@ model Modifier {
 
 // 3. Raw Materials & Inventory
 model RawMaterial {
-  id            String   @id @default(uuid())
-  name          String   @unique
-  stockQty      Float    @default(0.0) // Current stock level
-  minStockLevel Float    @default(0.0) // Reorder point warning
-  purchaseUnit  String   // e.g., "kg", "liter", "box"
-  deductUnit    String   // e.g., "g", "ml", "unit"
-  conversionFactor Float @default(1.0) // 1 PurchaseUnit = X DeductUnits (e.g. 1kg = 1000g)
-  isActive      Boolean  @default(true)
+  id                  String   @id @default(uuid())
+  name                String   @unique
+  stockQty            Float    @default(0.0) // Current stock level
+  minStockLevel       Float    @default(0.0) // Reorder point warning
+  purchaseUnit        String   // e.g., "kg", "liter", "box"
+  deductUnit          String   // e.g., "g", "ml", "unit"
+  conversionFactor    Float    @default(1.0) // 1 PurchaseUnit = X DeductUnits (e.g. 1kg = 1000g)
+  costPerPurchaseUnit Float    @default(0.0) // Cost per purchase unit (EGP) for calculating true recipe cost
+  isActive            Boolean  @default(true)
   
-  recipes       Recipe[]
-  recipesMod    RecipeModifier[]
-  wastageLogs   WastageLog[]
-  restockLogs   RestockLog[]
+  recipes             Recipe[]
+  recipesMod          RecipeModifier[]
+  wastageLogs         WastageLog[]
+  restockLogs         RestockLog[]
+  purchaseItems       PurchaseInvoiceItem[]
 }
 
 model Recipe {
@@ -102,28 +110,34 @@ model Table {
 
 // 5. Shift Management
 model Shift {
-  id            String    @id @default(uuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id])
-  cashierName   String?
-  openedAt      DateTime  @default(now())
-  closedAt      DateTime?
+  id                   String    @id @default(uuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id])
+  cashierName          String?
+  openedAt             DateTime  @default(now())
+  closedAt             DateTime?
   
-  floatCash     Float     @default(0.0) // Opening cash
-  closedCash    Float?    // Closing actual cash
-  closedInstaPay Float?   // Closing actual InstaPay
-  closedVisa    Float?    // Closing actual Visa
+  floatCash            Float     @default(0.0) // Opening cash
+  closedCash           Float?    // Closing actual cash
+  closedInstaPay       Float?    // Closing actual InstaPay
+  closedVisa           Float?    // Closing actual Visa
+  closedVodafoneCash   Float?    // Closing actual Vodafone Cash
+  closedCashOut        Float?    // Closing actual Cash Out via Visa
   
-  expectedCash  Float     @default(0.0)
-  expectedInstaPay Float  @default(0.0)
-  expectedVisa  Float     @default(0.0)
+  expectedCash         Float     @default(0.0)
+  expectedInstaPay     Float     @default(0.0)
+  expectedVisa         Float     @default(0.0)
+  expectedVodafoneCash Float     @default(0.0)
+  expectedCashOut      Float     @default(0.0)
   
-  varianceCash  Float     @default(0.0)
-  varianceInstaPay Float  @default(0.0)
-  varianceVisa  Float     @default(0.0)
+  varianceCash         Float     @default(0.0)
+  varianceInstaPay     Float     @default(0.0)
+  varianceVisa         Float     @default(0.0)
+  varianceVodafoneCash Float     @default(0.0)
   
-  orders        SalesOrder[]
-  transactions  CashTransaction[]
+  orders               SalesOrder[]
+  transactions         CashTransaction[]
+  returns              OrderReturn[]
 }
 
 model SavedCashierName {
@@ -136,32 +150,108 @@ model CashTransaction {
   id          String   @id @default(uuid())
   shiftId     String
   shift       Shift    @relation(fields: [shiftId], references: [id])
-  type        String   // "PAYOUT" | "PAYIN"
+  type        String   // "PAYOUT" | "PAYIN" | "CASH_OUT_SWIPE"
   amount      Float
-  reason      String   // Reason/Tag (e.g. "Purchased Lemons", "Cleaning supplies")
+  reason      String   // Reason/Tag (e.g. "Purchased Lemons", "Cleaning supplies", "Visa Cashout")
   createdAt   DateTime @default(now())
 }
 
-// 6. Sales Orders
+// 6. Customers & Client Profiles
+model Customer {
+  id           String   @id @default(uuid())
+  name         String
+  phone        String?  @unique
+  type         String   @default("INDIVIDUAL") // "INDIVIDUAL" (زبون) | "COMPANY" (شركة) | "HOSPITAL" (مستشفى) | "CAFE" (كافيه) | "OTHER" (أخرى)
+  discountRate Float    @default(0.0) // e.g. 10.0 for 10%
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  orders       SalesOrder[]
+}
+
+// Fixed Predefined Discount Reasons
+model DiscountReason {
+  id        String   @id @default(uuid())
+  reason    String   @unique
+  rate      Float?   // Optional default %
+  createdAt DateTime @default(now())
+}
+
+// 7. Suppliers & Purchase Invoices
+model Supplier {
+  id          String   @id @default(uuid())
+  name        String
+  phone       String?
+  companyName String?
+  address     String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  purchases   PurchaseInvoice[]
+}
+
+model PurchaseInvoice {
+  id              String   @id @default(uuid())
+  invoiceNumber   String?  @unique
+  supplierId      String?
+  supplier        Supplier? @relation(fields: [supplierId], references: [id])
+  supplierName    String?
+  invoiceDate     DateTime @default(now())
+  totalAmount     Float
+  paidAmount      Float    @default(0.0)
+  remainingAmount Float    @default(0.0)
+  paymentMethod   String   @default("CASH") // "CASH" | "VISA" | "INSTAPAY" | "VODAFONE_CASH" | "DEFERRED"
+  notes           String?
+  createdAt       DateTime @default(now())
+  
+  items           PurchaseInvoiceItem[]
+}
+
+model PurchaseInvoiceItem {
+  id              String          @id @default(uuid())
+  invoiceId       String
+  invoice         PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  rawMaterialId   String?
+  rawMaterial     RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
+  itemName        String
+  quantity        Float           // in purchase unit
+  purchaseUnit    String          // e.g. "kg", "liter", "box"
+  unitPrice       Float
+  totalPrice      Float
+}
+
+// 8. Sales Orders & Items
 model SalesOrder {
-  id            String   @id @default(uuid())
-  receiptNumber String?  @unique // Friendly daily receipt reference, e.g. DN-20260715-0001
-  shiftId       String
-  shift         Shift    @relation(fields: [shiftId], references: [id])
-  tableId       String?
-  table         Table?   @relation(fields: [tableId], references: [id])
-  orderType     String   // "DINE_IN" | "TAKEAWAY"
-  paymentMethod String   // "CASH" | "INSTAPAY"
-  status        String   // "COMPLETED" | "CANCELLED"
+  id             String   @id @default(uuid())
+  receiptNumber  String?  @unique // Friendly daily receipt reference, e.g. DN-20260715-0001
+  shiftId        String
+  shift          Shift    @relation(fields: [shiftId], references: [id])
+  tableId        String?
+  table          Table?   @relation(fields: [tableId], references: [id])
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id])
+  customerName   String?
+  orderType      String   // "DINE_IN" | "TAKEAWAY"
+  paymentMethod  String   // "CASH" | "VISA" | "INSTAPAY" | "VODAFONE_CASH" | "CASH_OUT"
+  cashOutAmount  Float?   @default(0.0)
+  cashOutFee     Float?   @default(0.0)
+  status         String   // "COMPLETED" | "CANCELLED" | "REFUNDED"
   
-  subtotal      Float
-  discount      Float    @default(0.0)
+  subtotal       Float
+  discount       Float    @default(0.0)
   discountReason String?
-  tax           Float    @default(0.0)
-  total         Float
+  tax            Float    @default(0.0)
+  total          Float
   
-  createdAt     DateTime @default(now())
-  items         SalesOrderItem[]
+  returnStatus   String   @default("NONE") // "NONE" | "PARTIAL" | "FULL"
+  returnedAmount Float    @default(0.0)
+  returnReason   String?
+  
+  createdAt      DateTime @default(now())
+  items          SalesOrderItem[]
+  returns        OrderReturn[]
 }
 
 model SalesOrderItem {
@@ -170,7 +260,8 @@ model SalesOrderItem {
   order        SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   itemId       String
   item         Item     @relation(fields: [itemId], references: [id])
-  qty          Int
+  qty          Float    @default(1.0)
+  unit         String?  @default("كيلو")
   unitPrice    Float
   totalPrice   Float
   comment      String?
@@ -187,13 +278,41 @@ model SalesOrderItemModifier {
   unitPriceImpact  Float
 }
 
-// 7. Inventory Audit & User Logs
+// 9. Returns & Refunds
+model OrderReturn {
+  id            String   @id @default(uuid())
+  orderId       String
+  order         SalesOrder @relation(fields: [orderId], references: [id])
+  shiftId       String
+  shift         Shift    @relation(fields: [shiftId], references: [id])
+  totalRefund   Float
+  reason        String?
+  restocked     Boolean  @default(true)
+  cashierName   String?
+  createdAt     DateTime @default(now())
+  
+  items         OrderReturnItem[]
+}
+
+model OrderReturnItem {
+  id          String      @id @default(uuid())
+  returnId    String
+  orderReturn OrderReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item        @relation(fields: [itemId], references: [id])
+  quantity    Float       @default(1.0)
+  refundPrice Float
+}
+
+// 10. Inventory Audit & User Logs
 model WastageLog {
   id            String      @id @default(uuid())
   rawMaterialId String
   rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
   quantity      Float       // in deductUnit
-  reason        String      // e.g., "Spillage", "Spoiled"
+  costAmount    Float       @default(0.0) // calculated cost of wasted amount
+  reason        String      // e.g., "Spillage", "Spoiled", "Expired", "Preparation Error"
+  loggedBy      String?
   createdAt     DateTime    @default(now())
 }
 
@@ -217,6 +336,6 @@ model UserLog {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  action    String   // Description of action (e.g., "Deleted SalesOrder item")
+  action    String   // Description of action
   createdAt DateTime @default(now())
 }

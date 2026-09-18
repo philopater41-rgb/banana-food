@@ -1,19 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
-const hiddenLegacyMaterialNames = [
-  'Almond Milk Pack',
-  'Chocolate Syrup',
-  'Espresso Coffee Beans',
-  'Frozen Croissant (Raw)',
-  'Full Cream Milk',
-  'White Sugar',
-];
-
 export async function GET() {
   try {
     const rawMaterials = await prisma.rawMaterial.findMany({
-      where: { name: { notIn: hiddenLegacyMaterialNames } },
       orderBy: { name: 'asc' },
     });
 
@@ -31,31 +21,37 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { name, stockQty, minStockLevel, purchaseUnit, deductUnit, conversionFactor } = await request.json();
+    const { name, stockQty, minStockLevel, purchaseUnit, deductUnit, conversionFactor, costPerPurchaseUnit } = await request.json();
 
-    if (!name || !purchaseUnit || !deductUnit || !conversionFactor) {
+    if (!name || !name.trim()) {
       return NextResponse.json(
-        { error: 'Name, purchase unit, deduct unit, and conversion factor are required' },
+        { error: 'اسم الخامة مطلوب' },
         { status: 400 }
       );
     }
 
+    const trimmedName = name.trim();
+    const pUnit = purchaseUnit?.trim() || 'kg';
+    const dUnit = deductUnit?.trim() || (pUnit === 'kg' ? 'g' : pUnit === 'liter' ? 'ml' : 'unit');
+    const factor = parseFloat(conversionFactor) || (pUnit === 'kg' || pUnit === 'liter' ? 1000 : 1.0);
+
     const exists = await prisma.rawMaterial.findUnique({
-      where: { name },
+      where: { name: trimmedName },
     });
 
     if (exists) {
-      return NextResponse.json({ error: 'Raw material with this name already exists' }, { status: 400 });
+      return NextResponse.json({ error: 'يوجد خامة مسجلة بنفس هذا الاسم مسبقاً' }, { status: 400 });
     }
 
     const material = await prisma.rawMaterial.create({
       data: {
-        name,
+        name: trimmedName,
         stockQty: parseFloat(stockQty) || 0.0,
         minStockLevel: parseFloat(minStockLevel) || 0.0,
-        purchaseUnit,
-        deductUnit,
-        conversionFactor: parseFloat(conversionFactor) || 1.0,
+        purchaseUnit: pUnit,
+        deductUnit: dUnit,
+        conversionFactor: factor,
+        costPerPurchaseUnit: parseFloat(costPerPurchaseUnit) || 0.0,
       },
     });
 
@@ -68,8 +64,9 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const { rawMaterialId, name, stockQty, minStockLevel, purchaseUnit, deductUnit, conversionFactor } = await request.json();
-    if (!rawMaterialId) {
+    const { rawMaterialId, id, name, stockQty, minStockLevel, purchaseUnit, deductUnit, conversionFactor, costPerPurchaseUnit } = await request.json();
+    const targetId = rawMaterialId || id;
+    if (!targetId) {
       return NextResponse.json({ error: 'الخامة مطلوبة.' }, { status: 400 });
     }
     const data: Record<string, string | number> = {};
@@ -79,11 +76,13 @@ export async function PATCH(request: Request) {
     if (purchaseUnit !== undefined) data.purchaseUnit = String(purchaseUnit).trim();
     if (deductUnit !== undefined) data.deductUnit = String(deductUnit).trim();
     if (conversionFactor !== undefined) data.conversionFactor = Number(conversionFactor);
+    if (costPerPurchaseUnit !== undefined) data.costPerPurchaseUnit = Number(costPerPurchaseUnit);
+
     if (!Object.keys(data).length || Object.values(data).some((value) => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) {
       return NextResponse.json({ error: 'راجع بيانات الخامة وتأكد أن الأرقام صحيحة.' }, { status: 400 });
     }
     const rawMaterial = await prisma.rawMaterial.update({
-      where: { id: rawMaterialId },
+      where: { id: targetId },
       data,
     });
     return NextResponse.json({ rawMaterial });
@@ -93,15 +92,31 @@ export async function PATCH(request: Request) {
   }
 }
 
+export const PUT = PATCH;
+
 export async function DELETE(request: Request) {
   try {
-    const { rawMaterialId } = await request.json();
+    const { searchParams } = new URL(request.url);
+    let rawMaterialId = searchParams.get('id') || searchParams.get('rawMaterialId');
+    if (!rawMaterialId) {
+      try {
+        const body = await request.json();
+        rawMaterialId = body?.rawMaterialId || body?.id;
+      } catch {
+        // ignore
+      }
+    }
     if (!rawMaterialId) return NextResponse.json({ error: 'الخامة مطلوبة.' }, { status: 400 });
+
     await prisma.$transaction(async (tx) => {
       await tx.recipe.deleteMany({ where: { rawMaterialId } });
       await tx.recipeModifier.deleteMany({ where: { rawMaterialId } });
       await tx.wastageLog.deleteMany({ where: { rawMaterialId } });
       await tx.restockLog.deleteMany({ where: { rawMaterialId } });
+      await tx.purchaseInvoiceItem.updateMany({
+        where: { rawMaterialId },
+        data: { rawMaterialId: null },
+      });
       await tx.rawMaterial.delete({ where: { id: rawMaterialId } });
     });
     return NextResponse.json({ success: true });
@@ -110,3 +125,4 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'تعذر حذف الخامة.' }, { status: 500 });
   }
 }
+

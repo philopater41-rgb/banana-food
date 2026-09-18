@@ -1,24 +1,35 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
-import { offlineDB, type LocalCategory, type LocalItem, type LocalModifier, type LocalHall, type LocalTable, type LocalSalesOrder, type LocalCart, type LocalCartItem } from '@/lib/dexie';
+import { useScale } from '@/hooks/useScale';
+import {
+  offlineDB,
+  type LocalCategory,
+  type LocalItem,
+  type LocalModifier,
+  type LocalSalesOrder,
+  type LocalCart,
+  type LocalCartItem,
+  type LocalDiscountReason,
+  type PaymentMethodType,
+} from '@/lib/dexie';
 import { 
-  Coffee, LogOut, Wifi, WifiOff, Users, ShoppingBag, 
+  LogOut, Wifi, WifiOff, ShoppingBag, 
   Trash2, Plus, Minus, DollarSign, RefreshCw, 
-  CheckCircle2, AlertCircle, X, PlusCircle, Printer, Menu, Package, Lock, MessageSquare
+  CheckCircle2, AlertCircle, AlertTriangle, X, Printer, Lock,
+  RotateCcw, Search, Tag, Check, Sparkles,
+  Scale, Edit3, Calculator, TrendingUp, Store,
+  HelpCircle, ChevronDown, ChevronUp
 } from 'lucide-react';
 
-type PaymentMethod = 'CASH' | 'INSTAPAY';
-
-// Use native browser crypto - NOT the Node.js polyfill
+// Native browser UUID
 const generateUUID = (): string => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  // Fallback for HTTP/non-secure contexts
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -26,6 +37,7 @@ const generateUUID = (): string => {
   });
 };
 
+// Generate Banana Food receipt number (BF-DD-MM-YYYY-XXXX)
 const generateReceiptNumber = (): string => {
   const now = new Date();
   const dateKey = [
@@ -38,262 +50,173 @@ const generateReceiptNumber = (): string => {
     String(now.getMonth() + 1).padStart(2, '0'),
     now.getFullYear(),
   ].join('-');
-  const counterKey = `dn_receipt_counter_${dateKey}`;
-  const nextNumber = Number.parseInt(localStorage.getItem(counterKey) || '0', 10) + 1;
+  const counterKey = `bf_receipt_counter_${dateKey}`;
+  const nextNumber = Number.parseInt(
+    localStorage.getItem(counterKey) || '0', 
+    10
+  ) + 1;
   localStorage.setItem(counterKey, String(nextNumber));
-  return `DN-${receiptDate}-${String(nextNumber).padStart(4, '0')}`;
+  return `BF-${receiptDate}-${String(nextNumber).padStart(4, '0')}`;
 };
 
 export default function POSPage() {
   const router = useRouter();
-  const { user, activeShift, setUser, setActiveShift, isOnline, activeHallId, activeTableId, setActiveHallId, setActiveTableId, logout } = useAppStore();
+  const {
+    user,
+    setUser,
+    activeShift,
+    setActiveShift,
+    isOnline,
+    logout,
+  } = useAppStore();
   const { pendingCount, syncing, triggerSync } = useOfflineSync();
+  const scale = useScale();
+  const [showScaleModal, setShowScaleModal] = useState(false);
+  const [showScaleHelp, setShowScaleHelp] = useState(false);
 
-  // Local state for POS data loaded from Dexie
+  const cleanUserName = (user?.name && !/bon/i.test(user.name) && !/مون/.test(user.name))
+    ? user.name
+    : 'كاشير بانانا فود';
+
+  // Local state for POS data loaded from Dexie / API
   const [categories, setCategories] = useState<LocalCategory[]>([]);
   const [items, setItems] = useState<LocalItem[]>([]);
   const [modifiers, setModifiers] = useState<LocalModifier[]>([]);
-  const [halls, setHalls] = useState<LocalHall[]>([]);
-  const [tables, setTables] = useState<LocalTable[]>([]);
-  
-  // Selected category in menu
+  const [discountReasons, setDiscountReasons] = useState<LocalDiscountReason[]>([]);
+
+  // Search query for fast item selection
+  const [itemSearchQuery, setItemSearchQuery] = useState('');
+
+  // Selected category in menu (null = All items)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
-  // Active cart (Takeaway or Table cart)
+  // Active direct counter cart
   const [cart, setCart] = useState<LocalCart | null>(null);
-  
+
+  // Payment Method selection (CASH default, optional INSTAPAY)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('CASH');
+
   // Modals
   const [showOpenShift, setShowOpenShift] = useState(false);
   const [showCloseShift, setShowCloseShift] = useState(false);
-  const [showExpenseModal, setShowExpenseModal] = useState(false);
-  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
-  const [attendanceName, setAttendanceName] = useState('');
-  const [attendanceNames, setAttendanceNames] = useState<string[]>([]);
-  const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [showModifiersModal, setShowModifiersModal] = useState(false);
   const [activeItemForMod, setActiveItemForMod] = useState<LocalItem | null>(null);
-  const [selectedMods, setSelectedMods] = useState<string[]>([]); // modifier IDs selected
+  const [selectedMods, setSelectedMods] = useState<string[]>([]);
   const [itemComment, setItemComment] = useState('');
-  const [commentItemId, setCommentItemId] = useState<string | null>(null);
-  const [commentDraft, setCommentDraft] = useState('');
 
-  // Existing shift from server (for takeover scenario)
-  const [existingShift, setExistingShift] = useState<any>(null);
-  const [checkingShift, setCheckingShift] = useState(false);
-  
+  // Produce Pricing, Units & Profit Calculator Modal
+  const [showProduceModal, setShowProduceModal] = useState(false);
+  const [selectedProduceItem, setSelectedProduceItem] = useState<LocalItem | null>(null);
+  const [editingCartItemId, setEditingCartItemId] = useState<string | null>(null);
+  const [produceCost, setProduceCost] = useState<string>('');
+  const [producePrice, setProducePrice] = useState<string>('');
+  const [produceMargin, setProduceMargin] = useState<string>('25.0');
+  const [produceUnit, setProduceUnit] = useState<'كيلو' | 'حزمة' | 'قطعة'>('كيلو');
+  const [produceQty, setProduceQty] = useState<string>('1');
+  const [savePricePermanently, setSavePricePermanently] = useState(true);
+
+  // Auto-sync produce quantity when scale button is pressed while modal is open
+  useEffect(() => {
+    if (showProduceModal && produceUnit === 'كيلو' && scale.currentWeight > 0) {
+      setProduceQty(scale.currentWeight.toFixed(3));
+    }
+  }, [scale.lastPacket, showProduceModal, produceUnit, scale.currentWeight]);
+
+  // Returns / Refund Modal
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnSearchQuery, setReturnSearchQuery] = useState('');
+  const [recentCompletedOrders, setRecentCompletedOrders] = useState<any[]>([]);
+  const [selectedReturnOrder, setSelectedReturnOrder] = useState<any | null>(null);
+  const [returnReason, setReturnReason] = useState('طلب الزبون');
+  const [returnRestock, setReturnRestock] = useState(true);
+  const [submittingReturn, setSubmittingReturn] = useState(false);
+
   // Shift inputs
   const [floatCash, setFloatCash] = useState('0');
   const [closedCash, setClosedCash] = useState('');
   const [closedInstaPay, setClosedInstaPay] = useState('');
   const [cashierName, setCashierName] = useState('');
   const [savedCashierNames, setSavedCashierNames] = useState<Array<{ id: string; name: string }>>([]);
-  const [showCashierNames, setShowCashierNames] = useState(false);
-  
-  // Cashier Inventory & Recipes Modal states
-  const [showInventoryModal, setShowInventoryModal] = useState(false);
-  const [inventoryMaterials, setInventoryMaterials] = useState<any[]>([]);
-  const [loadingInventory, setLoadingInventory] = useState(false);
-  const [selectedMatId, setSelectedMatId] = useState('');
-  const [inventoryAction, setInventoryAction] = useState<'view' | 'restock' | 'addMaterial' | 'recipes'>('view');
-  const [inventoryQty, setInventoryQty] = useState('');
-  const [inventoryRestockAmount, setInventoryRestockAmount] = useState('');
-  const [submitInventoryLoading, setSubmitInventoryLoading] = useState(false);
+  const [closedShiftReport, setClosedShiftReport] = useState<any | null>(null);
+  const [showShiftReportModal, setShowShiftReportModal] = useState(false);
 
-  // Cashier recipe states
-  const [recipesItems, setRecipesItems] = useState<any[]>([]);
-  const [recipesModifiers, setRecipesModifiers] = useState<any[]>([]);
-  const [selectedRecipeTarget, setSelectedRecipeTarget] = useState<{ type: 'item' | 'modifier'; id: string; name: string } | null>(null);
-  const [recipeIngredients, setRecipeIngredients] = useState<Array<{ rawMaterialId: string; quantity: number }>>([]);
-  const [loadingRecipes, setLoadingRecipes] = useState(false);
-
-  // New Material inputs (Cashier)
-  const [newMatName, setNewMatName] = useState('');
-  const [newMatStock, setNewMatStock] = useState('');
-  const [newMatMinStock, setNewMatMinStock] = useState('');
-  const [newMatPurchaseUnit, setNewMatPurchaseUnit] = useState('');
-  const [newMatDeductUnit, setNewMatDeductUnit] = useState('');
-  const [newMatConvFactor, setNewMatConvFactor] = useState('');
-  
-  // Expense inputs
-  const [expenseAmount, setExpenseAmount] = useState('');
-  const [expenseReason, setExpenseReason] = useState('');
-  
-  // POS Action inputs
+  // POS Discount inputs
   const [discountVal, setDiscountVal] = useState('');
   const [discountReason, setDiscountReason] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
-  
+
   // Receipt print state
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showPaymentConfirm, setShowPaymentConfirm] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState<LocalSalesOrder | null>(null);
-  
+
   // Mobile responsiveness tab
   const [mobileTab, setMobileTab] = useState<'menu' | 'cart'>('menu');
 
   // Loading & Alert status
   const [loading, setLoading] = useState(true);
-  const inventoryTableScrollRef = useRef<HTMLDivElement>(null);
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  
-  // Mounted state to prevent Next.js SSR hydration mismatch
+
+  const triggerAlert = useCallback((type: 'success' | 'error', text: string) => {
+    setAlertMsg({ type, text });
+    setTimeout(() => setAlertMsg(null), 3500);
+  }, []);
+
+  // Check active shift from server (never auto-create in background)
+  const ensureActiveShift = useCallback(async (): Promise<boolean> => {
+    if (activeShift) return true;
+    try {
+      const res = await fetch('/api/shifts/active');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.activeShift) {
+          setActiveShift(data.activeShift);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('Check active shift error:', e);
+    }
+    return false;
+  }, [activeShift, setActiveShift]);
+
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
-  }, []);
 
-  // 1. Guard check - Login & Shift status
-  useEffect(() => {
-    if (!user) {
-      router.push('/');
-      return;
-    }
-    
-    // Removed force open shift dialog on mount to allow viewing
-  }, [user, activeShift, router]);
-
-  // Guard check: active shift check
-  const ensureActiveShift = useCallback((): boolean => {
-    if (!activeShift) {
-      triggerAlert('error', 'يجب فتح وردية جديدة أولاً لبدء العمل والبيع.');
-      setShowOpenShift(true);
-      return false;
-    }
-    return true;
-  }, [activeShift]);
-
-  // Handle Table Selection
-  const handleTableSelect = (tableId: string | null) => {
-    if (!ensureActiveShift()) return;
-    setActiveTableId(tableId);
-  };
-
-  // Alert helper
-  const triggerAlert = (type: 'success' | 'error', text: string) => {
-    setAlertMsg({ type, text });
-    setTimeout(() => setAlertMsg(null), 4000);
-  };
-
-  // 2. Fetch / Load POS initialization data
-  const loadPOSData = useCallback(async () => {
-    setLoading(true);
-    try {
-      if (isOnline) {
-        // Fetch from server API
-        const res = await fetch('/api/pos-init');
-        if (res.ok) {
-          const data = await res.json();
-          
-          // Clear and save to Dexie local cache
-          // Clear and repopulate Dexie tables one by one (avoid transaction array type bug)
-            await offlineDB.categories.clear();
-            await offlineDB.items.clear();
-            await offlineDB.modifiers.clear();
-            await offlineDB.halls.clear();
-            await offlineDB.diningTables.clear();
-
-            await offlineDB.categories.bulkAdd(data.categories.map((c: any) => ({ id: c.id, name: c.name })));
-            
-            const allItems: LocalItem[] = [];
-            data.categories.forEach((c: any) => {
-              c.items.forEach((i: any) => {
-                allItems.push({ id: i.id, name: i.name, price: i.price, categoryId: c.id });
-              });
-            });
-            await offlineDB.items.bulkAdd(allItems);
-            
-            await offlineDB.modifiers.bulkAdd(data.modifiers);
-            await offlineDB.halls.bulkAdd(data.halls.map((h: any) => ({ id: h.id, name: h.name })));
-            
-            const allTables: LocalTable[] = [];
-            data.halls.forEach((h: any) => {
-              h.tables.forEach((t: any) => {
-                allTables.push({ id: t.id, name: t.name, hallId: h.id, status: t.status });
-              });
-            });
-            await offlineDB.diningTables.bulkAdd(allTables);
-
-            if (typeof data.todayOrdersCount === 'number') {
-              const now = new Date();
-              const dateKey = [
-                now.getFullYear(),
-                String(now.getMonth() + 1).padStart(2, '0'),
-                String(now.getDate()).padStart(2, '0'),
-              ].join('');
-              const counterKey = `dn_receipt_counter_${dateKey}`;
-              const currentLocal = Number.parseInt(localStorage.getItem(counterKey) || '0', 10);
-              if (data.todayOrdersCount > currentLocal) {
-                localStorage.setItem(counterKey, String(data.todayOrdersCount));
-              }
-            }
-
-          console.log('Local cache synced with server POS data.');
+    // Check active shift from server on load without auto-opening
+    fetch('/api/shifts/active')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.activeShift) {
+          setActiveShift(data.activeShift);
+        } else {
+          setActiveShift(null);
         }
-      }
-      
-      // Load from Dexie to local React state
-      const dbCats = await offlineDB.categories.toArray();
-      const dbItems = await offlineDB.items.toArray();
-      const dbMods = await offlineDB.modifiers.toArray();
-      const dbHalls = await offlineDB.halls.toArray();
-      const dbTables = await offlineDB.diningTables.toArray();
-      const openTableIds = new Set(
-        (await offlineDB.carts.toArray())
-          .filter((localCart) => localCart.orderType === 'DINE_IN' && localCart.items.length > 0 && localCart.tableId)
-          .map((localCart) => localCart.tableId!)
-      );
-      const resolvedTables = dbTables.map((table) =>
-        openTableIds.has(table.id) ? { ...table, status: 'OCCUPIED' } : table
-      );
+      })
+      .catch(() => {});
 
-      // A cart may have been created while offline. Keep its table visibly occupied
-      // after refreshing the server menu/table cache.
-      await offlineDB.diningTables.bulkPut(resolvedTables);
-      
-      // Dexie returns its own key order, so enforce the display order here too.
-      // خدمات is a special service tab and should always stay at the end.
-      const orderedCategories = [...dbCats].sort((a, b) => {
-        if (a.name === 'خدمات') return 1;
-        if (b.name === 'خدمات') return -1;
-        return a.name.localeCompare(b.name, 'ar');
-      });
-      setCategories(orderedCategories);
-      setItems(dbItems);
-      setModifiers(dbMods);
-      setHalls(dbHalls);
-      setTables(resolvedTables);
-      
-      if (orderedCategories.length > 0 && !selectedCategoryId) {
-        setSelectedCategoryId(orderedCategories[0].id);
-      }
-      if (dbHalls.length > 0 && (!activeHallId || !dbHalls.some((hall) => hall.id === activeHallId))) {
-        setActiveHallId(dbHalls[0].id);
-      }
-    } catch (error) {
-      console.error('Error loading POS data:', error);
-      triggerAlert('error', 'فشل تحميل بيانات الأصناف. شغالين على كاش المتصفح المحلي حالياً.');
-    } finally {
-      setLoading(false);
-    }
-  }, [isOnline]);
+    // Fetch saved cashier names
+    fetch('/api/cashier-names')
+      .then((r) => r.json())
+      .then((data) => setSavedCashierNames(data.cashierNames || []))
+      .catch(() => {});
+  }, [setActiveShift]);
 
-  useEffect(() => {
-    loadPOSData();
-  }, [loadPOSData]);
-
-  // 3. Load Cart (Dine-In or Takeaway)
-  const loadCart = useCallback(async (id: string, type: 'DINE_IN' | 'TAKEAWAY', tableName: string | null = null) => {
+  // Load Cart from Dexie or auto-create direct counter cart
+  const loadCart = useCallback(async () => {
     try {
-      let localCart = await offlineDB.carts.get(id);
+      let localCart = await offlineDB.carts.get('direct_counter');
       if (!localCart) {
         localCart = {
-          id,
-          orderType: type,
-          tableId: type === 'DINE_IN' ? id : null,
-          tableName: type === 'DINE_IN' ? tableName : 'تيك أواي',
+          id: 'direct_counter',
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          tableName: 'كاشير مباشر',
           items: [],
           subtotal: 0,
           discount: 0,
+          discountRate: 0,
+          discountReason: null,
           tax: 0,
           total: 0,
           updatedAt: Date.now(),
@@ -301,186 +224,567 @@ export default function POSPage() {
         await offlineDB.carts.put(localCart);
       }
       setCart(localCart);
+      setDiscountReason(localCart.discountReason || '');
       setDiscountVal(localCart.discountRate && localCart.discountRate > 0 ? localCart.discountRate.toString() : '');
     } catch (e) {
-      console.error('Error loading cart:', e);
+      console.error('Error loading counter cart:', e);
     }
   }, []);
 
-  // Initialize with takeaway cart or active table cart
   useEffect(() => {
-    if (activeTableId) {
-      const activeTable = tables.find(t => t.id === activeTableId);
-      loadCart(activeTableId, 'DINE_IN', activeTable?.name || null);
-    } else {
-      loadCart('takeaway', 'TAKEAWAY');
+    loadCart();
+  }, [loadCart]);
+
+  // Clean up any stale user data in browser localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawUser = localStorage.getItem('dn_user');
+        if (rawUser && (/bon/i.test(rawUser) || /مون/.test(rawUser))) {
+          const parsed = JSON.parse(rawUser);
+          parsed.name = parsed.role === 'ADMIN' ? 'إدارة BANANA FOOD' : 'كاشير بانانا فود';
+          localStorage.setItem('dn_user', JSON.stringify(parsed));
+          if (setUser) setUser(parsed);
+        }
+        const rawShift = localStorage.getItem('dn_shift');
+        if (rawShift && (/bon/i.test(rawShift) || /مون/.test(rawShift))) {
+          const parsedShift = JSON.parse(rawShift);
+          if (parsedShift.cashierName && (/bon/i.test(parsedShift.cashierName) || /مون/.test(parsedShift.cashierName))) {
+            parsedShift.cashierName = 'كاشير بانانا فود';
+            localStorage.setItem('dn_shift', JSON.stringify(parsedShift));
+          }
+        }
+      } catch (e) {}
     }
-  }, [activeTableId, tables, loadCart]);
+  }, [setUser]);
 
-  // 4. Save Cart & Recalculate Totals
-  const saveAndRecalculateCart = async (updatedItems: LocalCartItem[], customDiscountRate: number | null = null) => {
-    if (!cart) return;
+  // Load POS initialization data (Categories, Items, Modifiers)
+  const loadPOSData = useCallback(async () => {
+    setLoading(true);
+    try {
+      let freshCategories: any[] = [];
+      let freshItems: LocalItem[] = [];
+      let freshModifiers: LocalModifier[] = [];
+      let freshReasons: LocalDiscountReason[] = [];
 
-    const subtotal = updatedItems.reduce((acc, item) => acc + item.totalPrice, 0);
-    const rate = customDiscountRate !== null ? customDiscountRate : (cart.discountRate || 0);
+      if (isOnline) {
+        const res = await fetch('/api/pos-init');
+        if (res.ok) {
+          const data = await res.json();
+
+          freshCategories = data.categories || [];
+          freshModifiers = data.modifiers || [];
+          freshReasons = data.discountReasons || [];
+
+          // Flatten items
+          data.categories.forEach((c: any) => {
+            (c.items || []).forEach((i: any) => {
+              freshItems.push({ id: i.id, name: i.name, price: i.price, cost: i.cost || 0, categoryId: c.id });
+            });
+          });
+
+          // Sync into Dexie
+          await offlineDB.categories.clear();
+          await offlineDB.items.clear();
+          await offlineDB.modifiers.clear();
+          await offlineDB.discountReasons.clear();
+
+          if (freshCategories.length > 0) {
+            await offlineDB.categories.bulkAdd(freshCategories.map((c) => ({ id: c.id, name: c.name })));
+          }
+          if (freshItems.length > 0) {
+            await offlineDB.items.bulkAdd(freshItems);
+          }
+          if (freshModifiers.length > 0) {
+            await offlineDB.modifiers.bulkAdd(freshModifiers);
+          }
+          if (freshReasons.length > 0) {
+            await offlineDB.discountReasons.bulkAdd(freshReasons);
+          }
+
+          if (typeof data.todayOrdersCount === 'number') {
+            const now = new Date();
+            const dateKey = [
+              now.getFullYear(),
+              String(now.getMonth() + 1).padStart(2, '0'),
+              String(now.getDate()).padStart(2, '0'),
+            ].join('');
+            const counterKey = `bf_receipt_counter_${dateKey}`;
+            if (data.todayOrdersCount === 0) {
+              localStorage.setItem(counterKey, '0');
+              try {
+                await offlineDB.salesOrders.clear();
+                await offlineDB.orderReturns.clear();
+                await offlineDB.carts.clear();
+              } catch (e) {
+                console.error('Error clearing offline test orders:', e);
+              }
+            } else {
+              const currentLocal = Number.parseInt(localStorage.getItem(counterKey) || '0', 10);
+              if (data.todayOrdersCount > currentLocal) {
+                localStorage.setItem(counterKey, String(data.todayOrdersCount));
+              }
+            }
+          }
+        }
+      }
+
+      // If offline or as fallback, load from Dexie
+      if (freshItems.length === 0) {
+        const [dbCats, dbItems, dbMods, dbReasons] = await Promise.all([
+          offlineDB.categories.toArray(),
+          offlineDB.items.toArray(),
+          offlineDB.modifiers.toArray(),
+          offlineDB.discountReasons.toArray(),
+        ]);
+        freshCategories = dbCats;
+        freshItems = dbItems;
+        freshModifiers = dbMods;
+        freshReasons = dbReasons;
+      }
+
+      const orderedCategories = [...freshCategories].sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+
+      setCategories(orderedCategories);
+      setItems(freshItems);
+      setModifiers(freshModifiers);
+      setDiscountReasons(freshReasons);
+    } catch (error) {
+      console.error('Error loading POS data:', error);
+      triggerAlert('error', 'حصلت مشكلة في تحميل الأصناف، جرب تدوس على زرار التحديث.');
+    } finally {
+      setLoading(false);
+    }
+  }, [isOnline, triggerAlert]);
+
+  useEffect(() => {
+    loadPOSData();
+  }, [loadPOSData]);
+
+  // Refresh shift figures whenever close shift dialog opens
+  useEffect(() => {
+    if (showCloseShift && isOnline) {
+      fetch('/api/shifts/active')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.activeShift) setActiveShift(d.activeShift);
+        })
+        .catch(() => {});
+    }
+  }, [showCloseShift, isOnline, setActiveShift]);
+
+  const handleAutoFillExpected = () => {
+    if (!activeShift) return;
+    setClosedCash(String((activeShift.expectedCash || 0).toFixed(2)));
+    setClosedInstaPay(String((activeShift.expectedInstaPay || 0).toFixed(2)));
+  };
+
+  // Save and Recalculate Cart
+  const saveAndRecalculateCart = async (
+    updatedItems: LocalCartItem[],
+    customDiscountRate: number | null = null,
+    extraFields?: Partial<LocalCart>
+  ) => {
+    const baseCart = cart || {
+      id: 'direct_counter',
+      orderType: 'TAKEAWAY',
+      tableId: null,
+      tableName: 'كاشير مباشر',
+      items: [],
+      subtotal: 0,
+      discount: 0,
+      discountRate: 0,
+      discountReason: null,
+      tax: 0,
+      total: 0,
+      updatedAt: Date.now(),
+    };
+
+    const subtotal = updatedItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
+    const rate = customDiscountRate !== null ? customDiscountRate : (baseCart.discountRate || 0);
     const disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
-    const tax = 0;
     const total = Math.max(0, subtotal - disc);
 
     const updatedCart: LocalCart = {
-      ...cart,
+      ...baseCart,
       items: updatedItems,
       subtotal,
       discount: disc,
       discountRate: rate,
-      tax,
+      tax: 0,
       total,
       updatedAt: Date.now(),
+      ...extraFields,
     };
 
-    await offlineDB.carts.put(updatedCart);
     setCart(updatedCart);
+    await offlineDB.carts.put(updatedCart);
   };
 
-  // Add Item to Cart
-  const handleItemClick = (item: LocalItem) => {
-    if (!ensureActiveShift()) return;
-    if (item.name === 'حجز عيد ميلاد') {
-      const enteredPrice = window.prompt('اكتب قيمة حجز عيد الميلاد', '');
-      if (enteredPrice === null) return;
-      const price = Number(enteredPrice);
-      if (!Number.isFinite(price) || price <= 0) {
-        triggerAlert('error', 'اكتب قيمة حجز صحيحة أكبر من صفر.');
-        return;
+  // Add Item Directly to Cart (bulletproof, auto-resolves cart and shift)
+  const addItemToCartDirectly = async (
+    item: LocalItem,
+    selectedModList: LocalModifier[] = [],
+    customUnitPrice?: number,
+    comment = '',
+    qty = 1,
+    unit = 'كيلو',
+    costPrice = 0,
+    targetCartItemId?: string
+  ) => {
+    try {
+      let currentCart = cart;
+      if (!currentCart) {
+        currentCart = (await offlineDB.carts.get('direct_counter')) || {
+          id: 'direct_counter',
+          orderType: 'TAKEAWAY',
+          tableId: null,
+          tableName: 'كاشير مباشر',
+          items: [],
+          subtotal: 0,
+          discount: 0,
+          discountRate: 0,
+          discountReason: null,
+          tax: 0,
+          total: 0,
+          updatedAt: Date.now(),
+        };
       }
-      void addItemToCartDirectly(item, [], price);
+
+      const modPriceImpact = (selectedModList || []).reduce((acc, m) => acc + (m.priceImpact || 0), 0);
+      const unitPrice = customUnitPrice ?? (item.price + modPriceImpact);
+
+      const cartItems: LocalCartItem[] = Array.isArray(currentCart.items) ? [...currentCart.items] : [];
+
+      if (targetCartItemId) {
+        // In-place edit of an existing cart item
+        const editIdx = cartItems.findIndex((ci) => ci.id === targetCartItemId);
+        if (editIdx > -1) {
+          cartItems[editIdx] = {
+            ...cartItems[editIdx],
+            qty,
+            unit,
+            costPrice,
+            unitPrice,
+            totalPrice: Math.round(qty * unitPrice * 100) / 100,
+            comment: comment || null,
+          };
+        }
+      } else {
+        // Normal add or merge if same item & same price & same unit
+        const existingIndex = cartItems.findIndex(
+          (ci) =>
+            ci.itemId === item.id &&
+            ci.unitPrice === unitPrice &&
+            (ci.unit || 'كيلو') === unit &&
+            (ci.comment || '') === comment &&
+            (ci.modifiers || []).length === (selectedModList || []).length &&
+            (ci.modifiers || []).every((cm) => (selectedModList || []).some((sm) => sm.id === cm.modifierId))
+        );
+
+        if (existingIndex > -1) {
+          const existing = cartItems[existingIndex];
+          const newQty = Math.round(((existing.qty || 1) + qty) * 1000) / 1000;
+          cartItems[existingIndex] = {
+            ...existing,
+            qty: newQty,
+            unit,
+            totalPrice: Math.round(newQty * unitPrice * 100) / 100,
+          };
+        } else {
+          const newItem: LocalCartItem = {
+            id: generateUUID(),
+            itemId: item.id,
+            name: item.name,
+            qty,
+            unit,
+            costPrice,
+            unitPrice,
+            totalPrice: Math.round(qty * unitPrice * 100) / 100,
+            comment: comment || null,
+            modifiers: (selectedModList || []).map((m) => ({
+              modifierId: m.id,
+              name: m.name,
+              unitPriceImpact: m.priceImpact,
+            })),
+          };
+          cartItems.push(newItem);
+        }
+      }
+
+      const subtotal = cartItems.reduce((acc, it) => acc + (it.totalPrice || 0), 0);
+      const rate = currentCart.discountRate || 0;
+      const disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
+      const total = Math.max(0, subtotal - disc);
+
+      const updatedCart: LocalCart = {
+        ...currentCart,
+        items: cartItems,
+        subtotal,
+        discount: disc,
+        discountRate: rate,
+        tax: 0,
+        total,
+        updatedAt: Date.now(),
+      };
+
+      // State and storage update
+      setCart(updatedCart);
+      await offlineDB.carts.put(updatedCart);
+
+      triggerAlert('success', `تمام يا باشا، نزلنا ${qty} ${unit} من "${item.name}" في الفاتورة`);
+    } catch (err: any) {
+      console.error('Failed to add item to cart:', err);
+      triggerAlert('error', 'حصلت مشكلة ومعرفناش ننزل الصنف، جرب تاني');
+    }
+  };
+
+  // Produce modal opener (detects unit, loads warehouse cost/price/margin from admin, sets save true by default)
+  const openProduceModal = (item: LocalItem, existingCartItem?: LocalCartItem) => {
+    // Always use latest item data from items list if available
+    const freshItem = items.find((i) => i.id === item.id) || item;
+    setSelectedProduceItem(freshItem);
+    setEditingCartItemId(existingCartItem ? existingCartItem.id : null);
+
+    const price = existingCartItem ? existingCartItem.unitPrice : freshItem.price;
+    const rawCost = existingCartItem?.costPrice !== undefined && existingCartItem.costPrice > 0
+      ? existingCartItem.costPrice
+      : (freshItem.cost && freshItem.cost > 0 ? freshItem.cost : (price ? Math.round((price / 1.25) * 2) / 2 : 0));
+
+    setProducePrice(price ? price.toString() : '');
+    setProduceCost(rawCost > 0 ? rawCost.toString() : '');
+
+    if (rawCost > 0 && price > 0) {
+      const margin = ((price - rawCost) / rawCost) * 100;
+      setProduceMargin(margin.toFixed(1));
+    } else {
+      setProduceMargin('25.0');
+    }
+
+    let calculatedUnit: 'كيلو' | 'حزمة' | 'قطعة' = 'كيلو';
+    if (existingCartItem?.unit) {
+      calculatedUnit = existingCartItem.unit as any;
+    } else {
+      const name = freshItem.name.toLowerCase();
+      if (['بقدونس', 'شبت', 'كزبرة', 'جرجير', 'نعناع', 'خضرة', 'سلق', 'كرفس', 'روكا', 'ورقيات', 'فجل', 'كرات'].some((k) => name.includes(k))) {
+        calculatedUnit = 'حزمة';
+      } else if (['اناناس', 'أناناس', 'كابوتشا', 'كابوتشى', 'كرنب', 'بروكلي', 'بطيخ', 'شمام', 'كنتالوب', 'قرنبيط', 'خس'].some((k) => name.includes(k))) {
+        calculatedUnit = 'قطعة';
+      } else {
+        calculatedUnit = 'كيلو';
+      }
+    }
+    setProduceUnit(calculatedUnit);
+
+    if (!existingCartItem && calculatedUnit === 'كيلو' && scale.isConnected && scale.currentWeight > 0) {
+      setProduceQty(scale.currentWeight.toFixed(3));
+    } else {
+      setProduceQty(existingCartItem ? existingCartItem.qty.toString() : '1');
+    }
+    setSavePricePermanently(true);
+    setShowProduceModal(true);
+  };
+
+  // 3-Way Auto-Calculator Handlers
+  const handleProduceCostChange = (val: string) => {
+    setProduceCost(val);
+    const cost = parseFloat(val);
+    const margin = parseFloat(produceMargin);
+    const price = parseFloat(producePrice);
+
+    if (!isNaN(cost) && cost > 0) {
+      if (!isNaN(margin)) {
+        // Price = Cost * (1 + Margin / 100)
+        const calcPrice = cost * (1 + margin / 100);
+        setProducePrice((Math.round(calcPrice * 100) / 100).toString());
+      } else if (!isNaN(price) && price >= 0) {
+        // Margin = ((Price - Cost) / Cost) * 100
+        const calcMargin = ((price - cost) / cost) * 100;
+        setProduceMargin(calcMargin.toFixed(1));
+      }
+    }
+  };
+
+  const handleProducePriceChange = (val: string) => {
+    setProducePrice(val);
+    const price = parseFloat(val);
+    const cost = parseFloat(produceCost);
+    const margin = parseFloat(produceMargin);
+
+    if (!isNaN(price) && price >= 0) {
+      if (!isNaN(cost) && cost > 0) {
+        // Margin = ((Price - Cost) / Cost) * 100
+        const calcMargin = ((price - cost) / cost) * 100;
+        setProduceMargin(calcMargin.toFixed(1));
+      } else if (!isNaN(margin) && margin > -100) {
+        // Cost = Price / (1 + Margin / 100)
+        const calcCost = price / (1 + margin / 100);
+        setProduceCost((Math.round(calcCost * 100) / 100).toString());
+      }
+    }
+  };
+
+  const handleProduceMarginChange = (val: string) => {
+    setProduceMargin(val);
+    const margin = parseFloat(val);
+    const cost = parseFloat(produceCost);
+    const price = parseFloat(producePrice);
+
+    if (!isNaN(margin)) {
+      if (!isNaN(cost) && cost > 0) {
+        // Price = Cost * (1 + Margin / 100)
+        const calcPrice = cost * (1 + margin / 100);
+        setProducePrice((Math.round(calcPrice * 100) / 100).toString());
+      } else if (!isNaN(price) && price >= 0 && margin > -100) {
+        // Cost = Price / (1 + Margin / 100)
+        const calcCost = price / (1 + margin / 100);
+        setProduceCost((Math.round(calcCost * 100) / 100).toString());
+      }
+    }
+  };
+
+  const handleConfirmProduceItem = async () => {
+    if (!selectedProduceItem) return;
+
+    const priceNum = parseFloat(producePrice);
+    if (!Number.isFinite(priceNum) || priceNum < 0) {
+      triggerAlert('error', 'من فضلك اكتب سعر بيع صحيح.');
       return;
     }
+
+    const qtyNum = parseFloat(produceQty);
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+      triggerAlert('error', 'من فضلك حدد كمية أو وزن صحيح أكبر من الصفر.');
+      return;
+    }
+
+    const costNum = parseFloat(produceCost) || 0;
+
+    // Permanent price update in DB & Dexie
+    if (savePricePermanently) {
+      try {
+        await offlineDB.items.update(selectedProduceItem.id, {
+          price: priceNum,
+          cost: costNum,
+        });
+
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === selectedProduceItem.id ? { ...it, price: priceNum, cost: costNum } : it
+          )
+        );
+
+        if (isOnline) {
+          fetch('/api/items', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: selectedProduceItem.id,
+              price: priceNum,
+              cost: costNum,
+            }),
+          }).catch((e) => console.warn('Failed to patch item price:', e));
+        }
+
+        triggerAlert('success', `تم تحديث سعر "${selectedProduceItem.name}" في السيستم بنجاح`);
+      } catch (err) {
+        console.error('Error saving permanent price:', err);
+      }
+    }
+
+    await addItemToCartDirectly(
+      selectedProduceItem,
+      [],
+      priceNum,
+      '',
+      qtyNum,
+      produceUnit,
+      costNum,
+      editingCartItemId || undefined
+    );
+
+    setShowProduceModal(false);
+    setSelectedProduceItem(null);
+    setEditingCartItemId(null);
+  };
+
+  const handleEditCartItem = (cartItem: LocalCartItem) => {
+    const originalItem = items.find((i) => i.id === cartItem.itemId) || {
+      id: cartItem.itemId,
+      name: cartItem.name,
+      price: cartItem.unitPrice,
+      cost: cartItem.costPrice || 0,
+      categoryId: '',
+    };
+    openProduceModal(originalItem, cartItem);
+  };
+
+  // Add Item to Cart click handler: opens the Produce pricing, unit & weight modal
+  const handleItemClick = async (item: LocalItem) => {
+    await ensureActiveShift();
+    if (!activeShift) {
+      triggerAlert('error', 'يجب فتح شفت أولاً لبدء البيع وتسجيل الحسابات');
+      setShowOpenShift(true);
+      return;
+    }
+    openProduceModal(item);
+  };
+
+  // Open modifiers modal if needed
+  const handleOpenModifiers = (e: React.MouseEvent, item: LocalItem) => {
+    e.stopPropagation();
     setActiveItemForMod(item);
     setSelectedMods([]);
     setItemComment('');
     setShowModifiersModal(true);
   };
 
-  const addItemToCartDirectly = async (item: LocalItem, selectedModList: LocalModifier[], customUnitPrice?: number, comment = '') => {
-    if (!cart) return;
-
-    const modPriceImpact = selectedModList.reduce((acc, m) => acc + m.priceImpact, 0);
-    const unitPrice = customUnitPrice ?? (item.price + modPriceImpact);
-
-    // Check if identical item (same ID and same modifiers) already exists in cart
-    const existingIndex = cart.items.findIndex(
-      (ci) => 
-        ci.itemId === item.id && 
-        ci.unitPrice === unitPrice &&
-        (ci.comment || '') === comment &&
-        ci.modifiers.length === selectedModList.length &&
-        ci.modifiers.every((cm) => selectedModList.some((sm) => sm.id === cm.modifierId))
-    );
-
-    let updatedItems = [...cart.items];
-
-    if (existingIndex > -1) {
-      const existing = updatedItems[existingIndex];
-      updatedItems[existingIndex] = {
-        ...existing,
-        qty: existing.qty + 1,
-        totalPrice: (existing.qty + 1) * unitPrice,
-      };
-    } else {
-      const newItem: LocalCartItem = {
-        id: generateUUID(),
-        itemId: item.id,
-        name: item.name,
-        qty: 1,
-        unitPrice,
-        totalPrice: unitPrice,
-        comment: comment || null,
-        modifiers: selectedModList.map(m => ({
-          modifierId: m.id,
-          name: m.name,
-          unitPriceImpact: m.priceImpact,
-        })),
-      };
-      updatedItems.push(newItem);
-    }
-
-    await saveAndRecalculateCart(updatedItems);
-    
-    // If it's a Dine-in table, update table status to OCCUPIED in local Dexie database
-    if (cart.orderType === 'DINE_IN' && cart.tableId) {
-      await offlineDB.diningTables.update(cart.tableId, { status: 'OCCUPIED' });
-      setTables(prev => prev.map(t => t.id === cart.tableId ? { ...t, status: 'OCCUPIED' } : t));
-    }
-  };
-
-  // Modifiers Dialog Confirmation
   const confirmModifiers = () => {
     if (!activeItemForMod) return;
-    
-    const selectedModObjects = modifiers.filter(m => selectedMods.includes(m.id));
+    const selectedModObjects = modifiers.filter((m) => selectedMods.includes(m.id));
     addItemToCartDirectly(activeItemForMod, selectedModObjects, undefined, itemComment.trim());
-    
     setShowModifiersModal(false);
     setActiveItemForMod(null);
     setItemComment('');
   };
 
-  const saveItemComment = async () => {
-    if (!cart || !commentItemId) return;
-    const updatedItems = cart.items.map((item) => item.id === commentItemId ? { ...item, comment: commentDraft.trim() || null } : item);
-    await saveAndRecalculateCart(updatedItems);
-    setCommentItemId(null);
-    setCommentDraft('');
-  };
-
-  // Update quantity in cart
   const handleUpdateQty = async (cartItemId: string, delta: number) => {
     if (!cart) return;
-
-    let updatedItems = cart.items.map((item) => {
+    const cartItems = Array.isArray(cart.items) ? [...cart.items] : [];
+    const updatedItems = cartItems.map((item) => {
       if (item.id === cartItemId) {
-        const newQty = Math.max(1, item.qty + delta);
+        const step = item.unit === 'كيلو' && Math.abs(delta) === 1 ? (delta > 0 ? 0.25 : -0.25) : delta;
+        const newQty = Math.max(0.05, Math.round(((item.qty || 1) + step) * 1000) / 1000);
         return {
           ...item,
           qty: newQty,
-          totalPrice: newQty * item.unitPrice,
+          totalPrice: Math.round(newQty * item.unitPrice * 100) / 100,
         };
       }
       return item;
     });
-
     await saveAndRecalculateCart(updatedItems);
   };
 
-  // Remove Item from Cart
   const handleRemoveItem = async (cartItemId: string) => {
     if (!cart) return;
-
-    const updatedItems = cart.items.filter((item) => item.id !== cartItemId);
+    const cartItems = Array.isArray(cart.items) ? [...cart.items] : [];
+    const updatedItems = cartItems.filter((item) => item.id !== cartItemId);
     await saveAndRecalculateCart(updatedItems);
-
-    // If table cart is now empty, set status back to VACANT
-    if (updatedItems.length === 0 && cart.orderType === 'DINE_IN' && cart.tableId) {
-      await offlineDB.diningTables.update(cart.tableId, { status: 'VACANT' });
-      setTables(prev => prev.map(t => t.id === cart.tableId ? { ...t, status: 'VACANT' } : t));
-    }
   };
 
-  // Clear current cart
   const handleClearCart = async () => {
-    if (!cart) return;
-    await saveAndRecalculateCart([]);
-    
-    if (cart.orderType === 'DINE_IN' && cart.tableId) {
-      await offlineDB.diningTables.update(cart.tableId, { status: 'VACANT' });
-      setTables(prev => prev.map(t => t.id === cart.tableId ? { ...t, status: 'VACANT' } : t));
-    }
+    await saveAndRecalculateCart([], 0, {
+      customerId: null,
+      customerName: null,
+      discountReason: null,
+    });
     setDiscountVal('');
     setDiscountReason('');
+    triggerAlert('success', 'فضينا الفاتورة وخلاص جاهزة للزبون اللي جاي');
   };
 
-  // Apply a valid discount immediately while the cashier types.
+  // Discount Handlers (Free entry + Reason mandatory)
   const handleDiscountChange = (value: string) => {
     setDiscountVal(value);
     if (!cart) return;
@@ -490,178 +794,220 @@ export default function POSPage() {
 
     const discount = Math.min(enteredDiscount, 100);
     if (discount !== enteredDiscount) setDiscountVal(String(discount));
-    void saveAndRecalculateCart(cart.items, discount);
+    void saveAndRecalculateCart(cart.items, discount, { discountReason });
   };
 
-  // 5. Place / Complete Order
+  const handleDiscountReasonChange = (value: string) => {
+    setDiscountReason(value);
+    if (!cart) return;
+    void saveAndRecalculateCart(cart.items, null, { discountReason: value });
+  };
+
+  // Complete / Place Order
   const handleCompleteOrder = async () => {
-    if (!cart || cart.items.length === 0) {
-      triggerAlert('error', 'الفاتورة فاضية مقدرش أقفلها');
+    if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
+      triggerAlert('error', 'الفاتورة لسه فاضية! نزل خضار أو فاكهة الأول عشان تحاسب الزبون.');
       return;
     }
 
+    await ensureActiveShift();
     if (!activeShift) {
-      triggerAlert('error', 'مفيش شفت مفتوح حالياً. لازم تفتح الشفت الأول.');
+      triggerAlert('error', 'لازم تفتح شفت الأول عشان تبدأ تبيع يا برنس.');
       setShowOpenShift(true);
       return;
     }
+
+    // Mandatory reason for discount
     if (cart.discount > 0 && !discountReason.trim()) {
-      triggerAlert('error', 'اكتب سبب الخصم قبل إتمام الفاتورة.');
+      triggerAlert('error', 'يا باشا لازم تكتب سبب الخصم الأول عشان ينزل في وصل الزبون.');
       return;
     }
 
     try {
       const orderId = generateUUID();
+      const receiptNumber = generateReceiptNumber();
 
       const newOrder: LocalSalesOrder = {
         id: orderId,
-        receiptNumber: generateReceiptNumber(),
+        receiptNumber,
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        customerId: null,
+        customerName: null,
         shiftId: activeShift.id,
-        tableId: cart.tableId,
-        orderType: cart.orderType,
-        paymentMethod: paymentMethod,
-        status: 'COMPLETED',
-        subtotal: cart.subtotal,
-        discount: cart.discount,
-        discountReason: cart.discount > 0 ? discountReason.trim() : null,
-        tax: cart.tax,
-        total: cart.total,
-        createdAt: new Date().toISOString(),
         items: cart.items.map((i) => ({
-          id: i.id,
+          id: i.id || generateUUID(),
           itemId: i.itemId,
           qty: i.qty,
+          unit: i.unit || 'كيلو',
           unitPrice: i.unitPrice,
           totalPrice: i.totalPrice,
-          comment: i.comment || null,
-          modifiers: i.modifiers.map((m) => ({
+          modifiers: (i.modifiers || []).map((m) => ({
             modifierId: m.modifierId,
             unitPriceImpact: m.unitPriceImpact,
           })),
+          comment: i.comment || null,
         })),
+        subtotal: cart.subtotal,
+        discount: cart.discount,
+        discountReason: discountReason.trim() || null,
+        tax: 0,
+        total: cart.total,
+        paymentMethod,
+        status: 'COMPLETED',
         syncStatus: 'PENDING',
+        createdAt: new Date().toISOString(),
       };
 
-      // 1. Save order to Dexie offline sales queue
+      // 1. Save locally in Dexie
       await offlineDB.salesOrders.put(newOrder);
 
       // 2. Local shift statistics updates
-      const updatedExpected = { ...activeShift };
-      if (paymentMethod === 'CASH') {
-        updatedExpected.expectedCash += cart.total;
-      } else if (paymentMethod === 'INSTAPAY') {
-        updatedExpected.expectedInstaPay += cart.total;
+      if (activeShift) {
+        const updatedExpected = { ...activeShift };
+        const orderNet = newOrder.total;
+        if (paymentMethod === 'CASH') {
+          updatedExpected.expectedCash = (updatedExpected.expectedCash || 0) + orderNet;
+        } else if (paymentMethod === 'INSTAPAY') {
+          updatedExpected.expectedInstaPay = (updatedExpected.expectedInstaPay || 0) + orderNet;
+        }
+        setActiveShift(updatedExpected);
       }
-      setActiveShift(updatedExpected);
 
-      // 3. Set table status to VACANT and clear the cart in Dexie
-      if (cart.orderType === 'DINE_IN' && cart.tableId) {
-        await offlineDB.diningTables.update(cart.tableId, { status: 'VACANT' });
-        setTables(prev => prev.map(t => t.id === cart.tableId ? { ...t, status: 'VACANT' } : t));
+      // 3. If online, sync to server immediately
+      if (isOnline) {
+        fetch('/api/sales-orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newOrder),
+        })
+          .then((res) => {
+            if (res.ok) {
+              offlineDB.salesOrders.update(orderId, { syncStatus: 'SYNCED' });
+            } else {
+              triggerSync();
+            }
+          })
+          .catch((err) => {
+            console.warn('Direct order sync failed, falling back to batch sync:', err);
+            triggerSync();
+          });
       }
-      
-      // Clear active cart
+
+      // 3. Clear active cart
       await offlineDB.carts.delete(cart.id);
       setCart({
         ...cart,
         items: [],
         subtotal: 0,
         discount: 0,
+        discountRate: 0,
         tax: 0,
         total: 0,
+        customerId: null,
+        customerName: null,
+        discountReason: null,
       });
-      setDiscountVal('0');
+      setDiscountVal('');
       setDiscountReason('');
 
-      // 4. Set receipt for print preview and trigger auto print
+      // 4. Trigger print with Banana Food B&W receipt directly without blocking modal
       setReceiptOrder(newOrder);
-      setShowPrintModal(true);
       setTimeout(() => {
         window.print();
       }, 150);
 
-      triggerAlert('success', 'تم حفظ الأوردر وتقفيل الحساب!');
-      
-      // Try to trigger background sync immediately
+      triggerAlert('success', `تمام يا فنان! قفلنا الحساب وجاري طباعة وصل ${receiptNumber}`);
       triggerSync();
     } catch (e) {
       console.error('Failed to complete order:', e);
-      triggerAlert('error', 'حصل خطأ ومقدرناش نحفظ الأوردر.');
+      triggerAlert('error', 'حصلت مشكلة ومعرفناش نحفظ الفاتورة، جرب تاني.');
     }
   };
 
-  // 6a. Check for existing active shift on modal open
-  const checkExistingShift = useCallback(async () => {
-    setCheckingShift(true);
-    setExistingShift(null);
+  // Returns / Refund Handler
+  const openReturnModal = async () => {
+    setShowReturnModal(true);
+    setSelectedReturnOrder(null);
     try {
-      const res = await fetch('/api/shifts/active');
+      const res = await fetch('/api/sales-orders?take=20');
       if (res.ok) {
         const data = await res.json();
-        if (data.activeShift) {
-          setExistingShift(data.activeShift);
-        }
+        setRecentCompletedOrders(data.orders || []);
       }
     } catch (e) {
-      console.error('Failed to check existing shift:', e);
-    } finally {
-      setCheckingShift(false);
-    }
-  }, []);
-
-  // Auto-check for existing shift when open shift modal opens
-  useEffect(() => {
-    if (showOpenShift) {
-      checkExistingShift();
-      fetch('/api/cashier-names')
-        .then((res) => res.ok ? res.json() : null)
-        .then((data) => data && setSavedCashierNames(data.cashierNames))
-        .catch((error) => console.error('Failed to load cashier names:', error));
-    } else {
-      setExistingShift(null);
-      setCheckingShift(false);
-      setShowCashierNames(false);
-    }
-  }, [showOpenShift, checkExistingShift]);
-
-  // 6b. Takeover an existing open shift
-  const handleTakeoverShift = (openSettlement = false) => {
-    if (!existingShift) return;
-    // Map the API response to our ShiftState shape
-    const shiftState = {
-      id: existingShift.id,
-      userId: existingShift.userId,
-      cashierName: existingShift.cashierName || existingShift.user?.name || null,
-      floatCash: existingShift.floatCash,
-      expectedCash: existingShift.expectedCash,
-      expectedInstaPay: existingShift.expectedInstaPay,
-      expectedVisa: existingShift.expectedVisa || 0,
-      openedAt: existingShift.openedAt,
-    };
-    setActiveShift(shiftState);
-    setExistingShift(null);
-    setShowOpenShift(false);
-    if (openSettlement) {
-      setShowCloseShift(true);
-      triggerAlert('success', 'تم استلام الوردية. سجّل مبالغ التسوية لإغلاقها الآن.');
-    } else {
-      triggerAlert('success', 'تم استلام الوردية المفتوحة وتسجيل الدخول عليها بنجاح.');
+      console.error('Failed to load recent orders for returns:', e);
     }
   };
 
-  // 6c. Shift Opening POST (new shift)
+  const handleProcessReturn = async () => {
+    if (!selectedReturnOrder || !activeShift) return;
+    setSubmittingReturn(true);
+    try {
+      const res = await fetch('/api/returns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: selectedReturnOrder.id,
+          receiptNumber: selectedReturnOrder.receiptNumber,
+          shiftId: activeShift.id,
+          refundAmount: selectedReturnOrder.total,
+          paymentMethod: 'CASH',
+          reason: returnReason.trim(),
+          cashierName: activeShift.cashierName || cleanUserName,
+          restockItems: returnRestock,
+          items: selectedReturnOrder.items.map((oi: any) => ({
+            itemId: oi.itemId,
+            quantity: oi.qty,
+            refundPrice: oi.totalPrice,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشلت عملية الترجيع');
+
+      // 1. Immediately deduct refunded cash from drawer in POS state
+      if (activeShift) {
+        const refAmt = Number(selectedReturnOrder.total || 0);
+        const updatedShift = {
+          ...activeShift,
+          expectedCash: Math.max(0, (activeShift.expectedCash || 0) - refAmt),
+        };
+        setActiveShift(updatedShift);
+      }
+
+      // 2. Refetch active shift from server for full synchronization
+      fetch('/api/shifts/active')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.activeShift) setActiveShift(d.activeShift);
+        })
+        .catch((err) => console.warn('Sync active shift after return failed:', err));
+
+      triggerAlert('success', `تمام يا فنان، رجعنا الفاتورة ${selectedReturnOrder.receiptNumber} والفلوس للزبون!`);
+      setShowReturnModal(false);
+      setSelectedReturnOrder(null);
+    } catch (err: any) {
+      triggerAlert('error', err.message || 'حصلت مشكلة أثناء الترجيع');
+    } finally {
+      setSubmittingReturn(false);
+    }
+  };
+
+  // Open shift submit
   const handleOpenShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    const finalCashierName = cashierName.trim() || cleanUserName;
 
     try {
       const res = await fetch('/api/shifts/active', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
+          userId: user?.id,
+          cashierName: finalCashierName,
           floatCash: parseFloat(floatCash) || 0,
-          cashierName,
         }),
       });
 
@@ -670,95 +1016,18 @@ export default function POSPage() {
 
       setActiveShift(data.shift);
       setShowOpenShift(false);
-      setCashierName('');
-      triggerAlert('success', `تم فتح الوردية بعهدة افتتاحية: EGP ${floatCash}`);
+      triggerAlert('success', `تم فتح الوردية بنجاح للكاشير ${finalCashierName}`);
     } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في فتح الشفت');
+      triggerAlert('error', err.message || 'حصلت مشكلة في فتح الشفت');
     }
   };
 
-  const handleDeleteSavedCashierName = async (id: string) => {
-    try {
-      const res = await fetch(`/api/cashier-names?id=${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error();
-      setSavedCashierNames((names) => names.filter((name) => name.id !== id));
-    } catch {
-      triggerAlert('error', 'تعذر حذف الاسم المحفوظ.');
-    }
-  };
-
-  const ensureNoOpenTablesBeforeClosing = async () => {
-    const cartsWithOpenTables = await offlineDB.carts
-      .toArray()
-      .then((localCarts) => new Set(
-        localCarts
-          .filter((localCart) => localCart.orderType === 'DINE_IN' && localCart.tableId && localCart.items.length > 0)
-          .map((localCart) => localCart.tableId!)
-      ));
-    const occupiedTables = tables.filter((table) =>
-      table.status !== 'VACANT' || cartsWithOpenTables.has(table.id)
-    );
-    if (occupiedTables.length > 0) {
-      triggerAlert(
-        'error',
-        `لا يمكن تقفيل اليومية قبل إنهاء الترابيزات المفتوحة.\nالترابيزات المطلوبة: ${occupiedTables.map((table) => table.name).join('، ')}`
-      );
-      return false;
-    }
-    return true;
-  };
-
-  const openAttendance = async () => {
-    setShowAttendanceModal(true);
-    try { const res = await fetch('/api/attendance'); if (res.ok) { const data = await res.json(); setAttendanceNames(data.names || []); } } catch (error) { console.error(error); }
-  };
-  const handleAttendance = async (action: 'CHECK_IN' | 'CHECK_OUT') => {
-    if (!attendanceName.trim()) return triggerAlert('error', 'اكتب أو اختر اسم الموظف.');
-    setAttendanceLoading(true);
-    try {
-      const res = await fetch('/api/attendance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, employeeName: attendanceName }) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setAttendanceNames((names) => [...new Set([...names, attendanceName.trim()])].sort((a, b) => a.localeCompare(b, 'ar')));
-      triggerAlert('success', action === 'CHECK_IN' ? `تم تسجيل حضور ${attendanceName.trim()}.` : `تم تسجيل انصراف ${attendanceName.trim()}.`);
-      setAttendanceName(''); setShowAttendanceModal(false);
-    } catch (error: any) { triggerAlert('error', error.message || 'تعذر تسجيل الحضور.'); } finally { setAttendanceLoading(false); }
-  };
-
-  const handleRequestCloseShift = async () => {
-    if (await ensureNoOpenTablesBeforeClosing()) setShowCloseShift(true);
-  };
-
-  // 7. Shift Closing POST
+  // Close shift submit (Cash + InstaPay only)
   const handleCloseShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift) return;
 
     try {
-      if (!(await ensureNoOpenTablesBeforeClosing())) return;
-
-      const countPendingOrders = async () => {
-        const pendingOrders = await offlineDB.salesOrders
-          .where('syncStatus')
-          .equals('PENDING')
-          .toArray();
-        return pendingOrders.filter((order) => order.shiftId === activeShift.id).length;
-      };
-
-      let pendingOrdersCount = await countPendingOrders();
-      if (pendingOrdersCount > 0 && isOnline) {
-        await triggerSync();
-        pendingOrdersCount = await countPendingOrders();
-      }
-
-      if (pendingOrdersCount > 0) {
-        triggerAlert(
-          'error',
-          `لا يمكن إغلاق الوردية: يوجد ${pendingOrdersCount} فاتورة لم تتم مزامنتها بعد. اتصل بالإنترنت ثم أعد المحاولة.`
-        );
-        return;
-      }
-
       const res = await fetch('/api/shifts/close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -767,306 +1036,180 @@ export default function POSPage() {
           closedCash: parseFloat(closedCash) || 0,
           closedInstaPay: parseFloat(closedInstaPay) || 0,
           closedVisa: 0,
+          closedVodafoneCash: 0,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'فشل تقفيل الشفت');
 
-      triggerAlert('success', 'تم تقفيل اليومية بنجاح وتسجيل الفروقات.');
       setActiveShift(null);
       setShowCloseShift(false);
       setClosedCash('');
       setClosedInstaPay('');
-      // Removed logout() to keep the cashier logged in
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ أثناء تقفيل الشفت');
-    }
-  };
 
-  // 7.5 Cashier Inventory fetch & submission methods
-  const fetchPOSInventory = async () => {
-    setLoadingInventory(true);
-    try {
-      const res = await fetch('/api/inventory');
-      if (res.ok) {
-        const data = await res.json();
-        setInventoryMaterials(data.rawMaterials);
+      // Open closed shift summary modal so cashier and admin see exact variance
+      if (data.shift) {
+        setClosedShiftReport(data.shift);
+        setShowShiftReportModal(true);
       }
-    } catch (e) {
-      console.error(e);
-      triggerAlert('error', 'فشل تحميل بيانات المخزن.');
-    } finally {
-      setLoadingInventory(false);
+
+      triggerAlert('success', 'تم تقفيل الشفت واليومية بنجاح وحفظ الحسابات');
+    } catch (err: any) {
+      triggerAlert('error', err.message || 'حصلت مشكلة أثناء تقفيل الشفت');
     }
   };
 
-  // Cashier Recipe Fetching
-  const fetchPOSRecipes = async () => {
-    setLoadingRecipes(true);
-    try {
-      const res = await fetch('/api/recipes');
-      if (res.ok) {
-        const data = await res.json();
-        setRecipesItems(data.items);
-        setRecipesModifiers(data.modifiers);
+  // Arabic text normalization for search
+  const normalizeArabic = (text: string) => {
+    return (text || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\u064B-\u065F\u0670]/g, '') // remove tashkeel/diacritics
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي');
+  };
+
+  const matchArabicSearch = (name: string, query: string): { matches: boolean; score: number } => {
+    const q = normalizeArabic(query);
+    if (!q) return { matches: true, score: 0 };
+
+    const normName = normalizeArabic(name);
+    if (!normName) return { matches: false, score: 0 };
+
+    const nameWithoutAl = normName.startsWith('ال') ? normName.slice(2) : normName;
+
+    // 1. Direct item prefix match (e.g. "ف" matches "فلفل", "فراولة", "الفلفل")
+    if (normName.startsWith(q) || nameWithoutAl.startsWith(q)) {
+      return { matches: true, score: 3 };
+    }
+
+    // 2. Word-start prefix match (e.g. "رومي" matches "فلفل رومي")
+    // If query has 2+ characters, allow matching words that start with query
+    if (q.length >= 2) {
+      const words = normName.split(/\s+/).filter(Boolean);
+      const matchesWordStart = words.some((word) => {
+        const wordWithoutAl = word.startsWith('ال') ? word.slice(2) : word;
+        return word.startsWith(q) || wordWithoutAl.startsWith(q);
+      });
+
+      if (matchesWordStart) {
+        return { matches: true, score: 2 };
       }
-    } catch (e) {
-      console.error(e);
-      triggerAlert('error', 'فشل تحميل الوصفات ومقادير الأصناف.');
-    } finally {
-      setLoadingRecipes(false);
     }
+
+    return { matches: false, score: 0 };
   };
 
-  useEffect(() => {
-    if (showInventoryModal) {
-      fetchPOSInventory();
-      if (inventoryAction === 'recipes') {
-        fetchPOSRecipes();
-      }
-    }
-  }, [showInventoryModal, inventoryAction]);
-
-  useEffect(() => {
-    if (showInventoryModal) {
-      setInventoryAction('view');
-    }
-  }, [showInventoryModal]);
-
-  const handlePOSAddMaterialSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMatName || !newMatPurchaseUnit || !newMatDeductUnit || !newMatConvFactor) return;
-    setSubmitInventoryLoading(true);
-
-    try {
-      const res = await fetch('/api/inventory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newMatName,
-          stockQty: parseFloat(newMatStock) || 0.0,
-          minStockLevel: parseFloat(newMatMinStock) || 0.0,
-          purchaseUnit: newMatPurchaseUnit,
-          deductUnit: newMatDeductUnit,
-          conversionFactor: parseFloat(newMatConvFactor) || 1.0,
-        }),
+  // Filter items by category & prefix search query
+  const filteredItems = useMemo(() => {
+    const trimmed = itemSearchQuery.trim();
+    return items
+      .filter((item) => {
+        const matchesCategory = !selectedCategoryId || item.categoryId === selectedCategoryId;
+        if (!matchesCategory) return false;
+        if (!trimmed) return true;
+        return matchArabicSearch(item.name, trimmed).matches;
+      })
+      .sort((a, b) => {
+        if (!trimmed) return 0;
+        const scoreA = matchArabicSearch(a.name, trimmed).score;
+        const scoreB = matchArabicSearch(b.name, trimmed).score;
+        return scoreB - scoreA;
       });
+  }, [items, selectedCategoryId, itemSearchQuery]);
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشلت إضافة الخامة');
-
-      triggerAlert('success', 'تم إضافة الخامة الجديدة بنجاح للمخزن.');
-      setInventoryAction('view');
-      setNewMatName('');
-      setNewMatStock('');
-      setNewMatMinStock('');
-      setNewMatPurchaseUnit('');
-      setNewMatDeductUnit('');
-      setNewMatConvFactor('');
-      fetchPOSInventory();
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في إضافة الخامة');
-    } finally {
-      setSubmitInventoryLoading(false);
+  // Printable receipt helpers
+  const getPaymentMethodArabic = (method: string) => {
+    switch (method) {
+      case 'INSTAPAY': return 'تحويل إنستا باي';
+      case 'CASH':
+      case 'CASH':
+      default: return 'كاش نقدي';
     }
   };
 
-  const handlePOSSaveRecipeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRecipeTarget) return;
-    setSubmitInventoryLoading(true);
-
-    try {
-      const isItem = selectedRecipeTarget.type === 'item';
-      const body = {
-        itemId: isItem ? selectedRecipeTarget.id : undefined,
-        modifierId: !isItem ? selectedRecipeTarget.id : undefined,
-        ingredients: recipeIngredients.filter(ing => ing.rawMaterialId && ing.quantity > 0),
-      };
-
-      const res = await fetch('/api/recipes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) throw new Error('فشل حفظ تفاصيل الوصفة');
-
-      triggerAlert('success', 'تم حفظ وتحديث مقادير الوصفة بنجاح.');
-      setSelectedRecipeTarget(null);
-      fetchPOSRecipes();
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في حفظ الوصفة');
-    } finally {
-      setSubmitInventoryLoading(false);
-    }
+  // Category helper
+  const getCategoryEmoji = (_catName: string) => {
+    return '';
   };
 
-  const addRecipeRow = () => {
-    setRecipeIngredients(prev => [...prev, { rawMaterialId: '', quantity: 0 }]);
-  };
-
-  const removeRecipeRow = (idx: number) => {
-    setRecipeIngredients(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const updateRecipeRow = (idx: number, field: 'rawMaterialId' | 'quantity', value: any) => {
-    setRecipeIngredients(prev => prev.map((ing, i) => {
-      if (i === idx) {
-        return {
-          ...ing,
-          [field]: field === 'quantity' ? parseFloat(value) || 0 : value,
-        };
-      }
-      return ing;
-    }));
-  };
-
-  const startEditRecipe = (target: { type: 'item' | 'modifier'; id: string; name: string; recipe: any[] }) => {
-    setSelectedRecipeTarget(target);
-    const existing = target.recipe.map(ing => ({
-      rawMaterialId: ing.rawMaterialId,
-      quantity: ing.quantity,
-    }));
-    setRecipeIngredients(existing.length > 0 ? existing : [{ rawMaterialId: '', quantity: 0 }]);
-  };
-
-  const handlePOSUpdateItemPrice = async (item: { id: string; name: string; price: number }) => {
-    const enteredPrice = window.prompt(`السعر الجديد لـ ${item.name}`, String(item.price));
-    if (enteredPrice === null) return;
-    const price = Number(enteredPrice);
-    if (!Number.isFinite(price) || price < 0) {
-      triggerAlert('error', 'اكتب سعرًا صحيحًا أكبر من أو يساوي صفر.');
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/items/price', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId: item.id, price }),
-      });
-      if (!res.ok) throw new Error();
-      await offlineDB.items.update(item.id, { price });
-      setItems((currentItems) => currentItems.map((currentItem) => currentItem.id === item.id ? { ...currentItem, price } : currentItem));
-      setRecipesItems((currentItems) => currentItems.map((currentItem) => currentItem.id === item.id ? { ...currentItem, price } : currentItem));
-      triggerAlert('success', `تم تعديل سعر ${item.name} إلى EGP ${price.toFixed(2)}`);
-    } catch {
-      triggerAlert('error', 'تعذر تعديل سعر الصنف.');
-    }
-  };
-
-  const handlePOSRestockSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedMatId || !inventoryQty || inventoryRestockAmount === '') return;
-    setSubmitInventoryLoading(true);
-
-    try {
-      const res = await fetch('/api/inventory/restock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawMaterialId: selectedMatId,
-          quantity: parseFloat(inventoryQty),
-          amount: parseFloat(inventoryRestockAmount),
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشلت عملية التوريد');
-
-      triggerAlert('success', 'تم شحن وتوريد الخامة للمخزن بنجاح.');
-      setInventoryQty('');
-      setInventoryRestockAmount('');
-      setInventoryAction('view');
-      fetchPOSInventory();
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في عملية التوريد');
-    } finally {
-      setSubmitInventoryLoading(false);
-    }
-  };
-
-  // 8. Expense Logging POST
-  const handleExpenseSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeShift) return;
-
-    try {
-      const res = await fetch('/api/shifts/expenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shiftId: activeShift.id,
-          type: 'PAYOUT',
-          amount: parseFloat(expenseAmount) || 0,
-          reason: expenseReason,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشل تسجيل المصروف');
-
-      const updatedExpected = { ...activeShift };
-      updatedExpected.expectedCash -= parseFloat(expenseAmount);
-      setActiveShift(updatedExpected);
-
-      triggerAlert('success', `تم تسجيل سحب مصروفات بقيمة EGP ${expenseAmount}`);
-      setShowExpenseModal(false);
-      setExpenseAmount('');
-      setExpenseReason('');
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'خطأ في تسجيل المصروف');
-    }
-  };
-
-  // Standard browser print receipt trigger
-  const handlePrintReceipt = () => {
-    window.print();
-  };
-  const isBirthdayBookingReceipt = receiptOrder?.items.length === 1 &&
-    items.find((item) => item.id === receiptOrder.items[0].itemId)?.name === 'حجز عيد ميلاد';
-
+  // Banana Food Thermal Customer Receipt
   const ReceiptLayout = ({ preview = false }: { preview?: boolean }) => {
     if (!receiptOrder) return null;
 
     return (
       <div className={`receipt-layout ${preview ? 'receipt-preview' : ''}`} dir="rtl">
+        {/* Brand Header with high-contrast B&W Thermal Logo */}
         <div className="receipt-brand">
-          <img src="/logo.jpg" alt="Day & Night" className="receipt-logo" />
+          <img 
+            src="/banana-logo-bw.png" 
+            alt="بانانا فود" 
+            className="receipt-logo" 
+          />
+          <div className="receipt-title mt-1 font-black text-sm">بانانا فود - Banana Food</div>
+          <div className="text-[10px] font-bold text-gray-800">محل خضار وفاكهة - بانانا فود</div>
+          <div className="text-[10px] font-bold text-gray-800">خدمة التوصيل والدليفري: 01224991397</div>
         </div>
 
+        {/* Invoice Meta Grid */}
         <div className="receipt-meta-grid">
-          <div className="receipt-meta-wide"><span>رقم الفاتورة</span><strong className="receipt-number">{receiptOrder.receiptNumber}</strong></div>
-          <div className="receipt-meta-cell"><span>تاريخ</span><strong>{new Date(receiptOrder.createdAt).toLocaleDateString()}</strong></div>
-          <div className="receipt-meta-cell"><span>وقت</span><strong>{new Date(receiptOrder.createdAt).toLocaleTimeString()}</strong></div>
-          <div className="receipt-meta-cell"><span>الكاشير</span><strong>{activeShift?.cashierName || user?.name}</strong></div>
-          {!isBirthdayBookingReceipt && <div className="receipt-meta-cell"><span>النوع</span><strong>{receiptOrder.orderType === 'DINE_IN' ? 'صالة' : 'تيك أواي'}</strong></div>}
-          {!isBirthdayBookingReceipt && <div className="receipt-meta-wide"><span>الترابيزة</span><strong>{receiptOrder.tableId ? (tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة') : '-'}</strong></div>}
+          <div className="receipt-meta-wide">
+            <span>رقم الوصل</span>
+            <strong className="receipt-number">{receiptOrder.receiptNumber}</strong>
+          </div>
+          <div className="receipt-meta-cell">
+            <span>التاريخ</span>
+            <strong>{new Date(receiptOrder.createdAt).toLocaleDateString('ar-EG')}</strong>
+          </div>
+          <div className="receipt-meta-cell">
+            <span>الساعة</span>
+            <strong>{new Date(receiptOrder.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</strong>
+          </div>
+          <div className="receipt-meta-cell">
+            <span>الكاشير</span>
+            <strong>{activeShift?.cashierName || cleanUserName}</strong>
+          </div>
+          <div className="receipt-meta-cell">
+            <span>طريقة الدفع</span>
+            <strong>{getPaymentMethodArabic(receiptOrder.paymentMethod)}</strong>
+          </div>
         </div>
 
+        {/* Items Table */}
         <table className="receipt-items-table">
-          <colgroup><col className="receipt-item-name" /><col className="receipt-item-price" /><col className="receipt-item-qty" /><col className="receipt-item-total" /></colgroup>
+          <colgroup>
+            <col className="receipt-item-name" />
+            <col className="receipt-item-price" />
+            <col className="receipt-item-qty" />
+            <col className="receipt-item-total" />
+          </colgroup>
           <thead>
-            <tr><th>الصنف</th><th>سعر</th><th>الكمية</th><th>إجمالي</th></tr>
+            <tr>
+              <th>الصنف</th>
+              <th>السعر</th>
+              <th>الكمية</th>
+              <th>المجموع</th>
+            </tr>
           </thead>
           <tbody>
             {receiptOrder.items.map((item, idx) => {
-              const itDetails = items.find(i => i.id === item.itemId);
-              const isBirthdayBooking = itDetails?.name === 'حجز عيد ميلاد';
-              const additionsTotal = item.modifiers.reduce((sum, modifier) => sum + modifier.unitPriceImpact, 0);
-              const baseUnitPrice = item.unitPrice - additionsTotal;
-
-              if (isBirthdayBooking) {
-                return <tr key={idx}><td colSpan={3} className="receipt-booking-name">حجز عيد ميلاد</td><td>قيمة الحجز: {item.totalPrice.toFixed(2)}</td></tr>;
-              }
-
+              const itDetails = items.find((i) => i.id === item.itemId);
+              const unitStr = (item as any).unit ? ` ${(item as any).unit}` : '';
               return (
                 <tr key={idx}>
-                  <td>{itDetails?.name || 'صنف'}{item.comment && <span className="receipt-addition">{item.comment}</span>}{item.modifiers.length > 0 && <span className="receipt-addition">إضافة {additionsTotal.toFixed(2)}</span>}</td>
-                  <td>{baseUnitPrice.toFixed(2)}</td>
-                  <td>x{item.qty}</td>
+                  <td>
+                    {itDetails?.name || item.itemId || 'صنف'}
+                    {item.comment && <span className="receipt-addition">ملاحظة: {item.comment}</span>}
+                  </td>
+                  <td>{item.unitPrice.toFixed(2)}</td>
+                  <td className="receipt-qty-cell" dir="rtl">
+                    <span className="receipt-qty-content" dir="rtl">
+                      <span>{item.qty}</span>
+                      {(item as any).unit ? <span>{(item as any).unit}</span> : null}
+                    </span>
+                  </td>
                   <td>{item.totalPrice.toFixed(2)}</td>
                 </tr>
               );
@@ -1074,83 +1217,38 @@ export default function POSPage() {
           </tbody>
         </table>
 
+        {/* Totals Table with Discount & Mandatory Reason Display */}
         <table className="receipt-totals-table">
           <tbody>
-            <tr><th>الإجمالي:</th><td>{receiptOrder.subtotal.toFixed(2)}</td></tr>
-            {receiptOrder.discount > 0 && <tr className="receipt-discount"><th>الخصم:</th><td>-{receiptOrder.discount.toFixed(2)}</td></tr>}
-            <tr className="receipt-final-total"><th>الإجمالي النهائي:</th><td>{receiptOrder.total.toFixed(2)}</td></tr>
-          </tbody>
-        </table>
-
-        <div className="receipt-footer">
-          {`تم الدفع ${receiptOrder.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}`}<br />
-          شكراً لزيارتكم!
-        </div>
-      </div>
-    );
-  };
-
-  const BaristaKotLayout = ({ preview = false }: { preview?: boolean }) => {
-    if (!receiptOrder) return null;
-
-    const totalQtyCount = receiptOrder.items.reduce((sum, item) => sum + item.qty, 0);
-    const tableName = receiptOrder.tableId ? (tables.find(t => t.id === receiptOrder.tableId)?.name || 'طاولة') : null;
-    const orderTypeLabel = receiptOrder.orderType === 'DINE_IN' 
-      ? `صالة${tableName ? ` - ${tableName}` : ''}`
-      : 'تيك أواي';
-    const cashierNameText = activeShift?.cashierName || user?.name || 'كاشير';
-    const timeFormatted = new Date(receiptOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    return (
-      <div className={`kot-layout ${preview ? 'receipt-preview' : ''}`} dir="rtl">
-        {/* Top Order Number Box */}
-        <div className="kot-box kot-order-num">
-          {receiptOrder.receiptNumber}
-        </div>
-
-        {/* Second Order Type Box */}
-        <div className="kot-box kot-order-type">
-          {orderTypeLabel}
-        </div>
-
-        {/* Third Cashier Box */}
-        <div className="kot-box kot-cashier">
-          كاشير: {cashierNameText}
-        </div>
-
-        {/* Items Table */}
-        <table className="kot-table">
-          <thead>
             <tr>
-              <th className="kot-item-name-col">الصنف</th>
-              <th className="kot-item-qty-col">الكمية</th>
+              <th>إجمالي الفاتورة:</th>
+              <td>{receiptOrder.subtotal.toFixed(2)} جنيه</td>
             </tr>
-          </thead>
-          <tbody>
-            {receiptOrder.items.map((item, idx) => {
-              const itDetails = items.find(i => i.id === item.itemId);
-              return (
-                <tr key={idx}>
-                  <td className="kot-item-name-col">
-                    {itDetails?.name || 'صنف'}
-                    {item.comment && <span className="receipt-addition">ملاحظة: {item.comment}</span>}
-                  </td>
-                  <td className="kot-item-qty-col">{item.qty}</td>
+            {receiptOrder.discount > 0 && (
+              <>
+                <tr className="receipt-discount">
+                  <th>الخصم:</th>
+                  <td>-{receiptOrder.discount.toFixed(2)} جنيه</td>
                 </tr>
-              );
-            })}
+                {receiptOrder.discountReason && (
+                  <tr className="receipt-discount-reason-row">
+                    <th>سبب الخصم:</th>
+                    <td className="font-bold">{receiptOrder.discountReason}</td>
+                  </tr>
+                )}
+              </>
+            )}
+            <tr className="receipt-final-total">
+              <th>المطلوب من الزبون:</th>
+              <td>{receiptOrder.total.toFixed(2)} جنيه</td>
+            </tr>
           </tbody>
         </table>
 
-        {/* Bottom Footer Bar */}
-        <div className="kot-footer-grid">
-          <div className="kot-footer-cell">
-            {timeFormatted}
-          </div>
-          <div className="kot-footer-cell flex items-center justify-center gap-1">
-            <span>عدد الأصناف</span>
-            <strong className="mr-1">{totalQtyCount}</strong>
-          </div>
+        {/* Receipt Footer */}
+        <div className="receipt-footer">
+          <div>طلبات وتوصيل دليفري: 01224991397</div>
+          <div className="mt-0.5">نورتونا في بانانا فود وبالف هنا وشفا دايماً</div>
         </div>
       </div>
     );
@@ -1159,1336 +1257,1674 @@ export default function POSPage() {
   if (!mounted) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#090d16] text-gray-200 text-right" dir="rtl">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-8 h-8 animate-spin text-cyan-500" />
-          <span className="text-sm font-semibold">جاري تشغيل الكاشير وتحميل الترابيزات...</span>
-        </div>
+        <RefreshCw className="w-8 h-8 animate-spin text-emerald-500" />
       </div>
     );
   }
 
   return (
     <>
-      <div className="flex flex-col h-screen bg-[#090d16] text-gray-200 text-right no-print" dir="rtl">
-      
-      {/* 1. Header Navigation Bar */}
-      <header className="h-16 shrink-0 bg-[#0c1424] border-b border-white/5 px-4 sm:px-6 flex items-center justify-between z-10 no-print">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-md shadow-cyan-500/10 text-xs">
-            DN
-          </div>
-          <div className="hidden sm:block text-right">
-            <h1 className="text-sm font-bold text-white leading-tight">داي أند نايت</h1>
-            <p className="text-[10px] text-gray-400">شاشة كاشير الصالة والتيك أواي</p>
-          </div>
-        </div>
-
-        {/* Sync Status, Shift controls and Logout */}
-        <div className="flex items-center gap-2 sm:gap-4 flex-row-reverse overflow-x-auto max-w-[70%] sm:max-w-none scrollbar-none py-1">
-          {/* Online/Offline Badge */}
-          <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-semibold shrink-0 ${
-            isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-          }`}>
-            {isOnline ? (
-              <>
-                <Wifi className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                <span className="hidden sm:inline">متصل بالشبكة</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                <span className="hidden sm:inline">شغال محلي (أوفلاين)</span>
-              </>
-            )}
-          </div>
-
-          {/* Sync status widget */}
-          {pendingCount > 0 && (
-            <button 
-              onClick={triggerSync}
-              disabled={syncing || !isOnline}
-              className="flex items-center gap-1 px-2.5 py-1 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 rounded-full text-[10px] sm:text-xs font-semibold transition-all disabled:opacity-50 shrink-0"
-            >
-              <RefreshCw className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{pendingCount} فواتير معلقة</span>
-              <span className="sm:hidden">{pendingCount} معلق</span>
-            </button>
-          )}
-
-          {activeShift && (
-            <div className="flex items-center gap-4 text-[10px] sm:text-xs text-left ml-2 hidden md:flex shrink-0">
-              <div>
-                <p className="text-gray-400">نقدية الدرج المتوقعة</p>
-                <p className="font-bold text-cyan-400">EGP {activeShift.expectedCash.toFixed(2)}</p>
-              </div>
-              <div>
-                <p className="text-gray-400">إنستا باي المتوقع</p>
-                <p className="font-bold text-purple-400">EGP {activeShift.expectedInstaPay.toFixed(2)}</p>
-              </div>
+      <div className="flex flex-col h-screen bg-[#090d16] text-gray-200 text-right no-print select-none" dir="rtl">
+        {/* 1. Header Navigation Bar */}
+        <header className="h-16 shrink-0 bg-[#0c1424] border-b border-white/5 px-4 sm:px-6 flex items-center justify-between z-10 no-print">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl overflow-hidden relative border border-emerald-500/30 shrink-0 bg-white shadow-md p-0.5">
+              <img src="/banana-logo.jpg" alt="Banana Food" className="w-full h-full object-contain" />
             </div>
-          )}
+            <div className="hidden sm:block text-right">
+              <h1 className="text-base font-black text-white leading-tight flex items-center gap-1.5">
+                <span className="text-emerald-400">بانانا فود</span>
+                <span className="text-xs text-gray-400 font-semibold">- Banana Food</span>
+              </h1>
+              <span className="text-[11px] text-gray-400 font-medium block">كاشير ومبيعات الخضار والفاكهة</span>
+            </div>
+          </div>
 
-          {/* Admin link */}
-          {user?.role === 'ADMIN' && (
-            <button 
-              onClick={() => router.push('/admin')}
-              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] sm:text-xs font-semibold border border-white/5 transition-all text-white shrink-0"
-            >
-              <span className="hidden sm:inline">شاشة الإدارة</span>
-              <span className="sm:hidden">الإدارة</span>
-            </button>
-          )}
-
-          {/* Action buttons */}
-          <button onClick={openAttendance} className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-[10px] sm:text-xs font-semibold text-emerald-400 border border-emerald-500/20 transition-all shrink-0 flex items-center gap-1">
-            <Users className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">حضور وانصراف</span>
-          </button>
-          <button 
-            onClick={() => setShowInventoryModal(true)}
-            className="px-2.5 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] sm:text-xs font-semibold text-cyan-400 border border-cyan-500/20 transition-all shrink-0 flex items-center gap-1"
-          >
-            <Package className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">مخزن الخامات</span>
-          </button>
-
-          {activeShift ? (
-            <>
-              <button 
-                onClick={() => setShowExpenseModal(true)}
-                className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-[10px] sm:text-xs font-semibold text-amber-400 border border-amber-500/20 transition-all shrink-0 flex items-center gap-1"
-              >
-                <DollarSign className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">تسجيل مصروف</span>
-              </button>
-
-              <button 
-                onClick={handleRequestCloseShift}
-                className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-[10px] sm:text-xs font-semibold text-rose-400 border border-rose-500/20 transition-all shrink-0 flex items-center gap-1"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">تقفيل اليومية</span>
-              </button>
-            </>
-          ) : (
-            <button 
-              onClick={() => setShowOpenShift(true)}
-              className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-xs font-bold text-white shadow-lg shadow-orange-500/10 transition-all animate-pulse"
-            >
-              فتح وردية جديدة
-            </button>
-          )}
-
-          <button 
-            onClick={() => { logout(); router.push('/'); }}
-            className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all border border-white/5"
-            title="تسجيل الخروج"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
-
-      {/* 2. Main POS Workspace Grid */}
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden no-print">
-        
-        {/* Left Side: Tables Floor Plan & Items Menu Grid */}
-        <section className={`flex-1 flex flex-col p-4 overflow-hidden gap-4 ${mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'}`}>
-          
-          {/* Interactive Floor Plan (Halls & Tables) */}
-          <div className="glass-panel rounded-xl p-4 shrink-0 flex flex-col gap-3">
-            <div className="flex items-center justify-between border-b border-white/5 pb-2 flex-row-reverse">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-cyan-400" />
-                <h2 className="font-semibold text-sm text-white">صالات وترابيزات الصالة</h2>
-              </div>
-              <button 
-                onClick={() => handleTableSelect(null)}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                  !activeTableId 
-                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' 
-                    : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10'
-                }`}
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>تيك أواي / سفري</span>
-              </button>
+          <div className="flex items-center gap-2 sm:gap-4 flex-row-reverse overflow-x-auto py-1">
+            {/* Online/Offline status */}
+            <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-semibold shrink-0 ${
+              isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+            }`}>
+              {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{isOnline ? 'متصل بالنت أونلاين' : 'شغال محلي ع الجهاز (أوفلاين)'}</span>
             </div>
 
-            {/* Halls selectors */}
-            <div className="flex gap-2 justify-start">
-              {halls.map((hall) => (
+            {/* Scale Status & Live Weight Indicator */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {scale.isConnected ? (
                 <button
-                  key={hall.id}
-                  onClick={() => setActiveHallId(hall.id)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
-                    activeHallId === hall.id
-                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
-                      : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
-                  }`}
+                  type="button"
+                  onClick={() => setShowScaleModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-mono font-bold text-xs transition-all shadow-sm cursor-pointer"
+                  title="الميزان الإلكتروني متصل - اضغط لفتح الإعدادات والتشخيص"
                 >
-                  {hall.name}
+                  <span className="relative flex h-2 w-2">
+                    {scale.isStable && (
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    )}
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <Scale className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px] text-emerald-400/80 font-sans">الميزان:</span>
+                  <span className="text-white text-sm font-black tracking-wider">{scale.currentWeight.toFixed(3)}</span>
+                  <span className="text-[10px] text-emerald-300">كجم</span>
                 </button>
-              ))}
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowScaleModal(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white text-xs font-semibold transition-all cursor-pointer"
+                  title="اضغط لربط ميزان الخضار والفاكهة RS232"
+                >
+                  <Scale className="w-3.5 h-3.5 text-amber-400" />
+                  <span>ربط الميزان</span>
+                </button>
+              )}
             </div>
 
-            {/* Tables Grid */}
-            <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2.5 max-h-[140px] overflow-y-auto pl-1">
-              {tables
-                .filter(t => t.hallId === activeHallId)
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                .map((table) => (
+            {/* Returns Modal Button */}
+            <button
+              onClick={openReturnModal}
+              className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-[10px] sm:text-xs font-semibold text-rose-400 border border-rose-500/20 transition-all shrink-0 flex items-center gap-1 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>مرتجع وصل / ترجيع</span>
+            </button>
+
+            {/* Admin link */}
+            {user?.role === 'ADMIN' && (
+              <button 
+                onClick={() => router.push('/admin')}
+                className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] sm:text-xs font-semibold border border-white/5 transition-all text-white shrink-0 cursor-pointer"
+              >
+                لوحة تحكم المدير
+              </button>
+            )}
+
+            {activeShift ? (
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Cash and InstaPay drawer indicators */}
+                <div className="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 rounded-xl p-1 text-xs shadow-inner shrink-0">
+                  <div className="flex items-center gap-1 text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20" title="الكاش المتوقع في الدرج">
+                    <span className="text-[10px] text-emerald-300/80 font-normal">كاش الدرج:</span>
+                    <span className="font-mono font-bold">{(activeShift.expectedCash || 0).toFixed(0)} ج</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-purple-400 font-bold bg-purple-500/10 px-2 py-1 rounded-lg border border-purple-500/20" title="إنستا باي">
+                    <span className="text-[10px] text-purple-300/80 font-normal">إنستا باي:</span>
+                    <span className="font-mono font-bold">{(activeShift.expectedInstaPay || 0).toFixed(0)} ج</span>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setShowCloseShift(true)}
+                  className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-[10px] sm:text-xs font-semibold text-rose-300 border border-rose-500/20 transition-all shrink-0 flex items-center gap-1 cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>تقفيل الشفت واليومية</span>
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setShowOpenShift(true)}
+                className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-xs font-bold text-white shadow-lg transition-all animate-pulse cursor-pointer"
+              >
+                افتح شفت جديد
+              </button>
+            )}
+
+            <button 
+              onClick={() => { logout(); router.push('/'); }}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all border border-white/5 cursor-pointer"
+              title="اخرج من السيستم"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* 2. Main POS Workspace: Left is Fruit & Veg Menu, Right is Cart */}
+        <main className="flex-1 flex flex-col lg:flex-row overflow-hidden no-print">
+          {/* Menu Items Section (Takes full width, no tables) */}
+          <section className={`flex-1 flex flex-col p-4 overflow-hidden gap-3 ${mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'}`}>
+            <div className="flex-1 glass-panel rounded-2xl p-4 flex flex-col gap-3.5 overflow-hidden">
+              {/* Category selector & Search bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-white/5 pb-3 shrink-0">
+                <div className="flex gap-2 overflow-x-auto pb-1 pl-1 flex-1">
                   <button
-                    key={table.id}
-                    onClick={() => handleTableSelect(table.id)}
-                    className={`flex flex-col items-center justify-center p-2 rounded-lg text-xs font-medium border transition-all h-[55px] ${
-                      activeTableId === table.id
-                        ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-md shadow-cyan-500/5'
-                        : table.status === 'OCCUPIED'
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
-                        : 'bg-white/5 text-gray-300 border-white/5 hover:bg-white/10'
+                    onClick={() => setSelectedCategoryId(null)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold border whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                      selectedCategoryId === null ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm' : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
                     }`}
                   >
-                    <span>{table.name}</span>
-                    <span className="text-[9px] opacity-75 mt-0.5">
-                      {table.status === 'OCCUPIED' ? 'مشغولة' : 'فاضية'}
-                    </span>
+                    <span>كل الخضار والفاكهة</span>
+                    <span className="text-[10px] opacity-75 font-mono">({items.length})</span>
                   </button>
-                ))}
-            </div>
-          </div>
-
-          {/* Menu Categories & Items Grid */}
-          <div className="flex-1 glass-panel rounded-xl p-4 flex flex-col gap-4 overflow-hidden">
-            
-            {/* Category tabs */}
-            <div className="flex gap-2 border-b border-white/5 pb-3 overflow-x-auto shrink-0 pl-1 justify-start">
-              {categories.map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategoryId(cat.id)}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold border whitespace-nowrap transition-all ${
-                    selectedCategoryId === cat.id
-                      ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
-                      : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
-                  }`}
-                >
-                  {cat.name}
-                </button>
-              ))}
-            </div>
-
-            {/* Menu Items Grid */}
-            <div className="flex-1 overflow-y-auto pl-1">
-              {loading ? (
-                <div className="h-full flex items-center justify-center text-sm text-gray-400 gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin text-cyan-500" />
-                  <span>جاري تحميل قائمة المنيو...</span>
+                  {categories.map((cat) => {
+                    const count = items.filter((i) => i.categoryId === cat.id).length;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => setSelectedCategoryId(cat.id)}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold border whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                          selectedCategoryId === cat.id ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm' : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
+                        }`}
+                      >
+                        <span>{cat.name}</span>
+                        <span className="text-[10px] opacity-75 font-mono">({count})</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3.5">
-                  {items
-                    .filter(i => i.categoryId === selectedCategoryId)
-                    .map((item) => (
+
+                {/* Quick Search & Reload */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="relative w-full sm:w-60">
+                    <Search className="w-4 h-4 text-gray-400 absolute right-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={itemSearchQuery}
+                      onChange={(e) => setItemSearchQuery(e.target.value)}
+                      placeholder="دور على أي خضار أو فاكهة..."
+                      className="w-full bg-slate-900/80 border border-white/10 rounded-xl pr-9 pl-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 text-right transition-colors"
+                    />
+                    {itemSearchQuery && (
+                      <button 
+                        onClick={() => setItemSearchQuery('')}
+                        className="absolute left-2.5 top-2 text-gray-400 hover:text-white text-xs cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => { loadPOSData(); triggerAlert('success', 'تمام يا معلم، حدثنا الأسعار والأصناف كلها'); }}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-emerald-400 border border-white/5 transition-all cursor-pointer"
+                    title="تحديث الأسعار والأصناف"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Items Grid */}
+              <div className="flex-1 overflow-y-auto pl-1">
+                {filteredItems.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {filteredItems.map((item) => (
                       <button
                         key={item.id}
+                        type="button"
                         onClick={() => handleItemClick(item)}
-                        className="glass-panel-hover flex flex-col justify-between p-4 rounded-xl text-right bg-slate-900/30 border border-white/5 h-[100px] cursor-pointer hover:border-cyan-500/30 focus:outline-none"
+                        className="glass-panel-hover flex flex-col justify-between p-3.5 rounded-2xl text-right bg-slate-900/60 border border-white/10 h-[108px] cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-950/25 active:scale-95 transition-all group relative overflow-hidden"
                       >
-                        <span className="font-semibold text-sm text-white line-clamp-2 leading-tight">
-                          {item.name}
-                        </span>
-                        <div className="flex items-center justify-between w-full mt-2 flex-row-reverse">
-                          <span className="text-cyan-400 font-bold text-xs">
-                            EGP {item.price.toFixed(2)}
+                        <div className="w-full">
+                          <span className="font-bold text-xs sm:text-sm text-white line-clamp-2 leading-snug group-hover:text-yellow-300 transition-colors">
+                            {item.name}
                           </span>
-                          <PlusCircle className="w-4 h-4 text-cyan-400/80" />
+                        </div>
+                        <div className="flex items-center justify-between w-full mt-2 flex-row-reverse border-t border-white/5 pt-1.5">
+                          <span className="text-emerald-400 font-black text-sm font-mono tracking-tight">
+                            {item.price.toFixed(2)} <span className="text-[10px] font-normal text-gray-300">جنيه</span>
+                          </span>
+                          <div className="w-7 h-7 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-black transition-all shadow-sm">
+                            <Plus className="w-4 h-4 stroke-[2.5]" />
+                          </div>
                         </div>
                       </button>
                     ))}
-                </div>
-              )}
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 gap-2.5 py-12">
+                    <ShoppingBag className="w-12 h-12 stroke-1 opacity-30 text-emerald-400" />
+                    <p className="text-xs font-semibold text-gray-400">مفيش صنف بالاسم ده يا معلم!</p>
+                    {itemSearchQuery && (
+                      <button
+                        onClick={() => setItemSearchQuery('')}
+                        className="text-xs text-emerald-400 underline font-medium cursor-pointer"
+                      >
+                        اضغط هنا عشان ترجع تشوف كل الأصناف
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        {/* Right Side: Active Cart Invoice / Checkout Panel */}
-        <section className={`w-full lg:w-[380px] xl:w-[420px] bg-[#0c1424] lg:border-r border-white/5 flex flex-col overflow-hidden shrink-0 ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
-          
-          {/* Cart Header */}
-          <div className="p-4 border-b border-white/5 flex items-center justify-between shrink-0 flex-row-reverse">
-            <div className="flex items-center gap-2">
-              <ShoppingBag className="w-4 h-4 text-purple-400" />
-              <h3 className="font-semibold text-sm text-white">
-                {cart?.orderType === 'DINE_IN' ? `فاتورة ${cart.tableName}` : 'فاتورة التيك أواي'}
-              </h3>
+          {/* Right Side: Active Direct Counter Cart */}
+          <section className={`w-full lg:w-[410px] xl:w-[450px] bg-[#0c1424] lg:border-r border-white/5 flex flex-col overflow-hidden shrink-0 ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+            {/* Cart Header (No customer selector at top) */}
+            <div className="p-3.5 border-b border-white/5 flex items-center justify-between shrink-0 flex-row-reverse bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="w-4 h-4 text-emerald-400" />
+                <h3 className="font-bold text-xs sm:text-sm text-white">فاتورة وطلب الزبون</h3>
+                {cart && Array.isArray(cart.items) && cart.items.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-extrabold font-mono">
+                    {cart.items.length} صنف
+                  </span>
+                )}
+              </div>
+              <button 
+                onClick={handleClearCart}
+                disabled={!cart || !Array.isArray(cart.items) || cart.items.length === 0}
+                className="text-xs text-gray-400 hover:text-rose-400 disabled:opacity-40 transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>تفريغ الفاتورة</span>
+              </button>
             </div>
-            <button 
-              onClick={handleClearCart}
-              disabled={!cart || cart.items.length === 0}
-              className="text-xs text-gray-400 hover:text-rose-400 disabled:opacity-50 transition-all flex items-center gap-1"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>مسح الكل</span>
-            </button>
-          </div>
 
-          {/* Cart Items List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {cart && cart.items.length > 0 ? (
-              cart.items.map((item) => (
-                <div key={item.id} className="p-3 bg-slate-900/50 border border-white/5 rounded-xl flex flex-col gap-2">
-                  <div className="flex items-start justify-between gap-2 flex-row-reverse text-right">
-                    <div>
-                      <h4 className="font-medium text-xs text-white leading-tight">{item.name}</h4>
-                      {item.modifiers.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1 justify-start">
-                          {item.modifiers.map((m, idx) => (
-                            <span key={idx} className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/15">
-                              +{m.name}
+            {/* Cart Items List */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {cart && Array.isArray(cart.items) && cart.items.length > 0 ? (
+                cart.items.map((item) => (
+                  <div key={item.id} className="p-2.5 bg-slate-900/80 border border-white/10 rounded-xl flex flex-col gap-1.5 hover:border-emerald-500/30 transition-all">
+                    <div className="flex items-start justify-between gap-2 flex-row-reverse text-right">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-row-reverse">
+                          <h4 className="font-bold text-xs text-white leading-tight">{item.name}</h4>
+                          {item.unit && (
+                            <span className="px-1.5 py-0.5 text-[9px] rounded-md bg-white/10 text-emerald-300 font-bold">
+                              {item.unit}
                             </span>
-                          ))}
+                          )}
                         </div>
-                      )}
-                      {item.comment && <p className="text-[10px] text-amber-300 mt-1">{item.comment}</p>}
+                        {item.comment && <p className="text-[10px] text-yellow-300 mt-0.5">{item.comment}</p>}
+                      </div>
+                      <span className="font-bold text-xs text-emerald-400 shrink-0 font-mono">
+                        {item.totalPrice.toFixed(2)} جنيه
+                      </span>
                     </div>
-                    <span className="font-bold text-xs text-cyan-400 shrink-0">
-                      EGP {item.totalPrice.toFixed(2)}
-                    </span>
-                  </div>
 
-                  {/* Quantity and Remove buttons */}
-                  <div className="flex items-center justify-between border-t border-white/5 pt-2 mt-1 flex-row-reverse">
-                    <span className="text-[11px] text-gray-400">
-                      EGP {item.unitPrice.toFixed(2)} / للواحد
-                    </span>
-                    <div className="flex items-center gap-3 flex-row-reverse">
-                      <button
-                        onClick={() => handleUpdateQty(item.id, 1)}
-                        className="p-1 rounded bg-white/5 hover:bg-white/10 text-gray-300 transition-all"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
-                      <span className="text-xs font-bold text-white w-4 text-center">{item.qty}</span>
-                      <button
-                        onClick={() => handleUpdateQty(item.id, -1)}
-                        className="p-1 rounded bg-white/5 hover:bg-white/10 text-gray-300 transition-all"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => { setCommentItemId(item.id); setCommentDraft(item.comment || ''); }}
-                        className="text-gray-400 hover:text-amber-300 transition-colors"
-                        title="إضافة تعليق"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleRemoveItem(item.id)}
-                        className="mr-2 text-gray-500 hover:text-rose-400 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    <div className="flex items-center justify-between border-t border-white/5 pt-1.5 flex-row-reverse">
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {item.unitPrice.toFixed(2)} ج {item.unit ? `لـ ${item.unit}` : 'للكيلو'}
+                      </span>
+                      <div className="flex items-center gap-1.5 flex-row-reverse">
+                        <button 
+                          onClick={() => handleUpdateQty(item.id, item.unit === 'كيلو' ? 0.25 : 1)} 
+                          className="p-1 rounded-lg bg-white/5 hover:bg-emerald-500/20 text-gray-300 hover:text-emerald-300 transition-all active:scale-95 cursor-pointer"
+                          title={`زود ${item.unit === 'كيلو' ? 'ربع كيلو' : 'واحدة'}`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-xs font-black text-white px-1 text-center font-mono inline-flex items-center justify-center gap-1" dir="rtl">
+                          <span>{item.qty}</span>
+                          {item.unit && <span>{item.unit}</span>}
+                        </span>
+                        <button 
+                          onClick={() => handleUpdateQty(item.id, item.unit === 'كيلو' ? -0.25 : -1)} 
+                          className="p-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 transition-all active:scale-95 cursor-pointer"
+                          title={`نقص ${item.unit === 'كيلو' ? 'ربع كيلو' : 'واحدة'}`}
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleEditCartItem(item)}
+                          className="p-1 rounded-lg bg-white/5 hover:bg-yellow-500/20 text-gray-400 hover:text-yellow-400 transition-all active:scale-95 cursor-pointer"
+                          title="تعديل السعر أو الوزن أو الوحدة"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          onClick={() => handleRemoveItem(item.id)} 
+                          className="mr-1 text-gray-500 hover:text-rose-400 p-1 cursor-pointer"
+                          title="شيل الصنف ده خالص"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
+                  </div>
+                ))
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 gap-3 py-16">
+                  <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400 border border-white/5">
+                    <ShoppingBag className="w-8 h-8 stroke-1 text-emerald-400/60" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-gray-300">الفاتورة فاضية لسه!</p>
+                    <p className="text-[10px] text-gray-500 mt-1">اضغط على أي صنف من الخضار والفاكهة عشان ينزل في الحساب على طول</p>
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 gap-2 mt-20">
-                <Coffee className="w-12 h-12 stroke-1 opacity-40 animate-float" />
-                <p className="text-xs">الفاتورة فاضية حالياً.</p>
-                <p className="text-[10px] opacity-75">اضغط على الأصناف من القائمة اليمين لإضافتها.</p>
-              </div>
-            )}
-          </div>
-
-          {/* Pricing & Checkout Section */}
-          <div className="p-4 border-t border-white/5 bg-[#090d16] shrink-0 space-y-4">
-            
-            {/* Discount Tool */}
-            <div className="flex flex-col gap-1">
-              <input
-                type="number"
-                value={discountVal}
-                onChange={(e) => handleDiscountChange(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
-                placeholder="نسبة الخصم %"
-                min="0"
-                max="100"
-              />
-              {cart && cart.discount > 0 && (
-                <input
-                  type="text"
-                  value={discountReason}
-                  onChange={(e) => setDiscountReason(e.target.value)}
-                  className="w-full bg-slate-900 border border-rose-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-rose-400 text-right"
-                  placeholder="سبب الخصم (مطلوب)"
-                  maxLength={120}
-                />
               )}
             </div>
 
-            {/* Price Calculations */}
-            <div className="space-y-1.5 border-b border-white/5 pb-3">
-              <div className="flex justify-between text-xs text-gray-400 flex-row-reverse">
-                <span>الإجمالي قبل الخصم</span>
-                <span>EGP {cart?.subtotal.toFixed(2) || '0.00'}</span>
-              </div>
-              {cart && cart.discount > 0 && (
-                <div className="flex justify-between text-xs text-rose-400 flex-row-reverse">
-                  <span>الخصم المطبق ({cart.discountRate || 0}%)</span>
-                  <span>-EGP {cart.discount.toFixed(2)}</span>
+            {/* Bottom Checkout, Discount & Simple Payment */}
+            <div className="p-3.5 border-t border-white/5 bg-[#090d16] shrink-0 space-y-3">
+              {/* Discount Section (Editable & Reason Mandatory) */}
+              <div className="bg-slate-900/80 border border-white/10 rounded-xl p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1">
+                    <Tag className="w-3.5 h-3.5 text-yellow-400" />
+                    <span>خصم للزبون (لو حابب تعمله تخفيض)</span>
+                  </span>
+                  {cart && cart.discount > 0 && (
+                    <span className="text-[10px] text-rose-400 font-bold font-mono">
+                      -{cart.discount.toFixed(2)} جنيه ({cart.discountRate}%)
+                    </span>
+                  )}
                 </div>
-              )}
-              <div className="flex justify-between text-sm font-bold text-white pt-1 flex-row-reverse">
-                <span>المطلوب دفعه</span>
-                <span className="text-cyan-400 text-base">EGP {cart?.total.toFixed(2) || '0.00'}</span>
+
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-4">
+                    <input
+                      type="number"
+                      value={discountVal}
+                      onChange={(e) => handleDiscountChange(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/15 rounded-lg py-1 px-2 text-xs text-white placeholder-gray-500 text-center focus:border-yellow-400 focus:outline-none font-mono"
+                      placeholder="نسبة %"
+                      min="0"
+                      max="100"
+                    />
+                  </div>
+                  <div className="col-span-8">
+                    <input
+                      type="text"
+                      value={discountReason}
+                      onChange={(e) => handleDiscountReasonChange(e.target.value)}
+                      placeholder="اكتب سبب الخصم (لازم يتكتب عشان ينزل في الوصل) *"
+                      className={`w-full bg-slate-900 border rounded-lg py-1 px-2 text-xs text-white placeholder-gray-500 text-right focus:outline-none ${
+                        cart && cart.discount > 0 && !discountReason.trim()
+                          ? 'border-rose-500/80 bg-rose-950/20'
+                          : 'border-white/15 focus:border-yellow-400'
+                      }`}
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* Payment Method selection */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 block text-right">
-                طريقة الدفع
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('CASH')}
-                  className={`flex flex-col items-center gap-1 py-2 rounded-xl border text-xs font-semibold transition-all ${
-                    paymentMethod === 'CASH'
-                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
-                      : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
-                  }`}
-                >
-                  <DollarSign className="w-3.5 h-3.5" />
-                  <span>كاش</span>
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('INSTAPAY')}
-                  className={`flex flex-col items-center gap-1 py-2 rounded-xl border text-xs font-semibold transition-all ${
-                    paymentMethod === 'INSTAPAY'
-                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-sm'
-                      : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>إنستا باي</span>
-                </button>
+              {/* Price Calculation Summary */}
+              <div className="space-y-1.5 border-b border-white/5 pb-2.5">
+                <div className="flex justify-between text-xs text-gray-400 flex-row-reverse">
+                  <span>الحساب قبل الخصم:</span>
+                  <span className="font-mono">{cart?.subtotal.toFixed(2) || '0.00'} جنيه</span>
+                </div>
+                {cart && cart.discount > 0 && (
+                  <div className="flex justify-between text-xs text-rose-400 flex-row-reverse">
+                    <span>
+                      الخصم ({cart.discountRate || 0}%)
+                      {discountReason ? ` [${discountReason}]` : ''}:
+                    </span>
+                    <span className="font-mono">-{cart.discount.toFixed(2)} جنيه</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm font-bold text-white pt-1 flex-row-reverse">
+                  <span>المطلوب من الزبون كاش:</span>
+                  <span className="text-emerald-400 text-base font-black font-mono">
+                    {cart?.total.toFixed(2) || '0.00'} جنيه
+                  </span>
+                </div>
               </div>
+
+              {/* Payment Methods (Simplified: Cash default, optional InstaPay) */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-gray-400 block text-right">
+                  طريقة استلام الفلوس من الزبون:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('CASH')}
+                    className={`flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      paymentMethod === 'CASH'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
+                        : 'bg-slate-900/60 border-white/5 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>كاش في الدرج (نقدي)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('INSTAPAY')}
+                    className={`flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      paymentMethod === 'INSTAPAY'
+                        ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm'
+                        : 'bg-slate-900/60 border-white/5 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
+                    <span>تحويل إنستا باي</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Confirm Checkout Button */}
+              <button
+                onClick={() => setShowPaymentConfirm(true)}
+                disabled={!cart || !Array.isArray(cart.items) || cart.items.length === 0}
+                className="w-full py-3 bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-600 hover:from-emerald-600 hover:to-green-700 text-white font-black rounded-xl shadow-lg shadow-emerald-500/15 transition-all disabled:opacity-40 text-sm flex items-center justify-center gap-2 flex-row-reverse cursor-pointer active:scale-98"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{`قفل الحساب وطباعة الوصل (${cart?.total.toFixed(2) || '0.00'} جنيه)`}</span>
+              </button>
             </div>
+          </section>
+        </main>
 
-            {/* Complete checkout button */}
-            <button
-              onClick={() => setShowPaymentConfirm(true)}
-              disabled={!cart || cart.items.length === 0}
-              className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-600 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md shadow-cyan-500/10 active:scale-98 disabled:opacity-50 text-sm flex items-center justify-center gap-2 flex-row-reverse"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{`تأكيد وتقفيل الحساب (EGP ${cart?.total.toFixed(2) || '0.00'})`}</span>
-            </button>
-          </div>
-        </section>
-      </main>
-
-      {/* ======================================================== */}
-      {/* 3. Modals & Dialogs (Open Shift, Close Shift, Expenses) */}
-      {/* ======================================================== */}
-
-      {/* Alert Banner */}
-      {alertMsg && (
-        <div dir="rtl" className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-2rem)] max-w-xl p-4 rounded-xl shadow-2xl border text-sm flex items-start gap-3 transition-all no-print flex-row-reverse ${
-          alertMsg.type === 'success' 
-            ? 'bg-emerald-950 border-emerald-400/40 text-emerald-100' 
-            : 'bg-rose-950 border-rose-400/40 text-rose-100'
-        }`}>
-          {alertMsg.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
-          <span className="whitespace-pre-line font-semibold leading-relaxed text-right flex-1">{alertMsg.text}</span>
+        {/* Mobile Tab Switcher */}
+        <div className="lg:hidden h-14 bg-[#0c1424] border-t border-white/10 flex items-center justify-around px-4 shrink-0 z-20">
+          <button
+            onClick={() => setMobileTab('menu')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              mobileTab === 'menu' ? 'bg-emerald-500/20 text-emerald-400' : 'text-gray-400'
+            }`}
+          >
+            <ShoppingBag className="w-4 h-4" />
+            <span>قائمة الأصناف</span>
+          </button>
+          <button
+            onClick={() => setMobileTab('cart')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              mobileTab === 'cart' ? 'bg-emerald-500/20 text-emerald-400' : 'text-gray-400'
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span>الفاتورة ({cart && Array.isArray(cart.items) ? cart.items.length : 0})</span>
+          </button>
         </div>
-      )}
 
-      {showAttendanceModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowAttendanceModal(false)}>
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button onClick={() => setShowAttendanceModal(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-bold text-white mb-2">تسجيل حضور وانصراف</h3>
-            <p className="text-xs text-gray-400 mb-5">اكتب اسم الموظف أو اختَره، والوقت يتسجل تلقائيًا.</p>
-            <input list="attendance-names" value={attendanceName} onChange={(e) => setAttendanceName(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-emerald-500 text-right" placeholder="اسم الموظف" autoFocus />
-            <datalist id="attendance-names">{attendanceNames.map((name) => <option key={name} value={name} />)}</datalist>
-            <div className="grid grid-cols-2 gap-3 mt-5">
-              <button disabled={attendanceLoading} onClick={() => handleAttendance('CHECK_IN')} className="py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl disabled:opacity-50">تسجيل حضور</button>
-              <button disabled={attendanceLoading} onClick={() => handleAttendance('CHECK_OUT')} className="py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-xl disabled:opacity-50">تسجيل انصراف</button>
-            </div>
-          </div>
-        </div>
-      )}
+        {/* PRODUCE PRICING, UNIT & 3-WAY AUTO-CALCULATOR MODAL */}
+        {showProduceModal && selectedProduceItem && (() => {
+          const currentCostVal = parseFloat(produceCost) || 0;
+          const currentPriceVal = parseFloat(producePrice) || 0;
+          const currentQtyVal = parseFloat(produceQty) || 0;
+          const unitProfit = Math.round((currentPriceVal - currentCostVal) * 100) / 100;
+          const totalItemPrice = Math.round(currentPriceVal * currentQtyVal * 100) / 100;
+          const totalProfit = Math.round(unitProfit * currentQtyVal * 100) / 100;
 
-      {/* OPEN SHIFT DIALOG */}
-      {showOpenShift && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowOpenShift(false)}>
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button 
-              onClick={() => setShowOpenShift(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
+          return (
+            <div 
+              className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-3 sm:p-4 backdrop-blur-md no-print"
+              onClick={() => { setShowProduceModal(false); setSelectedProduceItem(null); setEditingCartItemId(null); }}
             >
-              <X className="w-5 h-5" />
-            </button>
-            
-            {checkingShift ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-8">
-                <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin" />
-                <p className="text-sm text-gray-400">جاري التحقق من حالة الوردية...</p>
-              </div>
-            ) : existingShift ? (
-              // --- TAKEOVER MODE: existing shift found ---
-              <div className="space-y-5">
-                <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex-row-reverse">
-                  <AlertCircle className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-amber-300">فيه وردية مفتوحة لسه!</p>
-                    <p className="text-xs text-amber-400/80 mt-1">
-                      اتفتحت من إيد: <span className="font-bold text-white">{existingShift.user?.name || 'مستخدم'}</span>
-                      <br />
-                      في: {new Date(existingShift.openedAt).toLocaleString('ar-EG')}
+              <div 
+                className="w-full max-w-lg glass-panel bg-[#0d1527]/95 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 relative text-right shadow-2xl overflow-y-auto max-h-[92vh]"
+                dir="rtl"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setShowProduceModal(false);
+                    setSelectedProduceItem(null);
+                    setEditingCartItemId(null);
+                  } else if (e.key === 'Enter' && !e.shiftKey) {
+                    handleConfirmProduceItem();
+                  }
+                }}
+              >
+                {/* Close Button */}
+                <button 
+                  type="button"
+                  onClick={() => { setShowProduceModal(false); setSelectedProduceItem(null); setEditingCartItemId(null); }} 
+                  className="absolute top-4 left-4 text-gray-400 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                {/* Modal Header */}
+                <div className="flex items-center gap-3 mb-4 border-b border-white/10 pb-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-yellow-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 shadow-inner">
+                    <Scale className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg sm:text-xl font-black text-white">
+                        {selectedProduceItem.name}
+                      </h3>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      حدّد السعر والوحدة والوزن (الأسعار بتتحسب تلقائياً لحظة بلحظة)
                     </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-center">
-                  <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                    <p className="text-[10px] text-gray-400">كاش الدرج المتوقع</p>
-                    <p className="text-sm font-bold text-cyan-400 mt-1">EGP {existingShift.expectedCash?.toFixed(2) || '0.00'}</p>
-                  </div>
-                  <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                    <p className="text-[10px] text-gray-400">إنستا باي المتوقع</p>
-                    <p className="text-sm font-bold text-purple-400 mt-1">EGP {existingShift.expectedInstaPay?.toFixed(2) || '0.00'}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => handleTakeoverShift()}
-                    className="py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl shadow-lg transition-all text-xs"
-                  >
-                    استلم الوردية وابدأ شغل
-                  </button>
-                  <button
-                    onClick={() => handleTakeoverShift(true)}
-                    className="py-3 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/25 text-rose-300 font-bold rounded-xl transition-all text-xs"
-                  >
-                    استلمها وقفّل اليومية
-                  </button>
-                </div>
-
-                <p className="text-center text-[10px] text-gray-500">
-                  اختر إغلاق اليومية لو الوردية القديمة انتهت وتريد فتح وردية جديدة بعدها.
-                </p>
-              </div>
-            ) : (
-              // --- NORMAL MODE: no existing shift ---
-              <>
-                <h3 className="text-xl font-bold text-white mb-2">فتح شفت ويومية جديدة</h3>
-                <p className="text-xs text-gray-400 mb-6">اكتب عهدة الكاش الافتتاحية اللي في الدرج عشان تبدأ شفت جديد والبيع.</p>
-                
-                <form onSubmit={handleOpenShiftSubmit} className="space-y-4">
-                  <div className="relative">
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">اسم الكاشير الذي سيفتح الوردية</label>
-                    <input
-                      type="text"
-                      required
-                      value={cashierName}
-                      onFocus={() => setShowCashierNames(true)}
-                      onChange={(e) => {
-                        setCashierName(e.target.value);
-                        setShowCashierNames(true);
-                      }}
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                      placeholder="اكتب الاسم أو اختَره من القائمة"
-                      autoComplete="off"
-                    />
-                    {showCashierNames && savedCashierNames.length > 0 && (
-                      <div className="absolute z-50 top-full mt-1 w-full max-h-44 overflow-y-auto rounded-xl border border-white/10 bg-slate-900 shadow-2xl">
-                        {savedCashierNames
-                          .filter((savedName) => savedName.name.includes(cashierName.trim()))
-                          .map((savedName) => (
-                            <div key={savedName.id} className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/5">
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => {
-                                  setCashierName(savedName.name);
-                                  setShowCashierNames(false);
-                                }}
-                                className="flex-1 text-right text-sm text-white"
-                              >
-                                {savedName.name}
-                              </button>
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => handleDeleteSavedCashierName(savedName.id)}
-                                aria-label={`حذف ${savedName.name}`}
-                                className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
+                <div className="space-y-4">
+                  {/* 1. Unit Selector (كيلو / حزمة / قطعة) */}
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">العهدة الافتتاحية في الدرج (EGP)</label>
-                    <div className="relative">
-                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-500">EGP</span>
-                      <input
-                        type="number"
-                        required
-                        value={floatCash}
-                        onChange={(e) => setFloatCash(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 pl-12 pr-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                        placeholder="0.00"
-                        min="0"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl shadow-lg transition-all"
-                  >
-                    ابدأ الوردية والبيع
-                  </button>
-                </form>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* CLOSE SHIFT DIALOG (SETTLEMENT) */}
-      {showCloseShift && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowCloseShift(false)}>
-          <div className="w-full max-w-lg glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button 
-              onClick={() => setShowCloseShift(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-xl font-bold text-white mb-2">تسوية وإغلاق الشفت اليومي</h3>
-            <p className="text-xs text-gray-400 mb-6">اكتب المبالغ الفعلية اللي معاك في الدرج والإنستا باي لتسوية الوردية وحساب العجز أو الزيادة.</p>
-            
-            <form onSubmit={handleCloseShiftSubmit} className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
-                  <span className="text-[10px] text-gray-400">الكاش المتوقع بالدرج</span>
-                  <p className="text-sm font-bold text-cyan-400 mt-1">EGP {activeShift?.expectedCash.toFixed(2) || '0.00'}</p>
-                </div>
-                <div className="p-3 bg-white/5 border border-white/5 rounded-xl text-center">
-                  <span className="text-[10px] text-gray-400">المتوقع إنستا باي</span>
-                  <p className="text-sm font-bold text-purple-400 mt-1">EGP {activeShift?.expectedInstaPay.toFixed(2) || '0.00'}</p>
-                </div>
-              </div>
-
-              <div className="space-y-4 pt-2">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-400 mb-2">الكاش الفعلي في الدرج (EGP)</label>
-                  <input
-                    type="number"
-                    required
-                    value={closedCash}
-                    onChange={(e) => setClosedCash(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                    placeholder="اكتب المبلغ الفعلي الكاش هنا"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي الإنستا باي الفعلي (EGP)</label>
-                  <input
-                    type="number"
-                    required
-                    value={closedInstaPay}
-                    onChange={(e) => setClosedInstaPay(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-purple-500 text-right"
-                    placeholder="اكتب إجمالي إنستا باي هنا"
-                    min="0"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white font-bold rounded-xl shadow-lg transition-all text-sm mt-4"
-              >
-                تأكيد التسوية وإغلاق الوردية
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* CASH OUT / EXPENSE MODAL */}
-      {showExpenseModal && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowExpenseModal(false)}>
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button 
-              onClick={() => setShowExpenseModal(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-xl font-bold text-white mb-2">سحب نقدية / مصروفات</h3>
-            <p className="text-xs text-gray-400 mb-6">سجل أي مبالغ بيتم سحبها من درج الكاشير لشراء خامات أو دفع إكراميات أو فواتير.</p>
-            
-            <form onSubmit={handleExpenseSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-2">المبلغ المسحوب (EGP)</label>
-                <input
-                  type="number"
-                  required
-                  value={expenseAmount}
-                  onChange={(e) => setExpenseAmount(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                  placeholder="0.00"
-                  min="0"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-2">السبب أو البيان</label>
-                <input
-                  type="text"
-                  required
-                  value={expenseReason}
-                  onChange={(e) => setExpenseReason(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                  placeholder="مثال: شراء ثلج، منظفات، ليمون للمحل"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-lg transition-all mt-2"
-              >
-                تأكيد سحب النقدية
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODIFIERS SELECTION DIALOG */}
-      {showModifiersModal && activeItemForMod && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowModifiersModal(false)}>
-          <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button 
-              onClick={() => setShowModifiersModal(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-xl font-bold text-white mb-1">إضافة على السعر</h3>
-            <p className="text-xs text-gray-400 mb-6">اختر قيمة أو أكثر لإضافتها إلى {activeItemForMod.name}. لن تخصم أي خامات من المخزن.</p>
-            
-            <div className="grid grid-cols-2 gap-3">
-              {modifiers
-                .filter((mod) => mod.name.startsWith('إضافة عامة'))
-                .sort((a, b) => a.priceImpact - b.priceImpact)
-                .map((mod) => {
-                const isSelected = selectedMods.includes(mod.id);
-                return (
-                  <button
-                    key={mod.id}
-                    onClick={() => {
-                      if (isSelected) {
-                        setSelectedMods(prev => prev.filter(id => id !== mod.id));
-                      } else {
-                        setSelectedMods(prev => [...prev, mod.id]);
-                      }
-                    }}
-                    className={`flex flex-col items-center justify-center gap-1.5 min-h-20 rounded-xl border text-center transition-all ${
-                      isSelected 
-                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
-                        : 'bg-slate-900 border-white/5 text-gray-400 hover:bg-slate-900/80 hover:text-white'
-                    }`}
-                  >
-                    <span className="text-xs font-semibold">إضافة</span>
-                    <span className="text-sm font-bold text-cyan-400">+EGP {mod.priceImpact.toFixed(2)}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-5">
-              <label className="block text-xs font-semibold text-gray-300 mb-2">تعليق على الصنف (اختياري)</label>
-              <input
-                type="text"
-                value={itemComment}
-                onChange={(e) => setItemComment(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right"
-                placeholder="مثال: بدون سكر / زيادة ثلج"
-                maxLength={120}
-              />
-            </div>
-
-            <button
-              onClick={confirmModifiers}
-              className="w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl shadow-lg transition-all mt-6 text-xs uppercase tracking-wider"
-            >
-              تأكيد وإضافة للفاتورة
-            </button>
-          </div>
-        </div>
-      )}
-
-      {commentItemId && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setCommentItemId(null)}>
-          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button onClick={() => setCommentItemId(null)} className="absolute top-4 left-4 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
-            <h3 className="text-lg font-bold text-white mb-2">تعليق على الصنف</h3>
-            <p className="text-xs text-gray-400 mb-4">التعليق سيظهر في الفاتورة.</p>
-            <input
-              autoFocus
-              type="text"
-              value={commentDraft}
-              onChange={(e) => setCommentDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void saveItemComment(); }}
-              className="w-full bg-slate-900 border border-white/10 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-amber-500 text-right"
-              placeholder="اكتب تعليقًا"
-              maxLength={120}
-            />
-            <button onClick={() => void saveItemComment()} className="w-full py-3 mt-4 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl">حفظ التعليق</button>
-          </div>
-        </div>
-      )}
-
-      {/* PAYMENT CONFIRMATION DIALOG */}
-      {showPaymentConfirm && cart && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowPaymentConfirm(false)}>
-          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <h3 className="text-lg font-bold text-white">تأكيد الدفع</h3>
-            <p className="text-xs text-gray-400 mt-2">راجع المبلغ وطريقة الدفع قبل تقفيل الفاتورة.</p>
-            <div className="my-5 p-4 rounded-xl bg-white/5 border border-white/10 space-y-2">
-              <div className="flex justify-between text-sm text-gray-300 flex-row-reverse">
-                <span>الإجمالي</span>
-                <span className="font-bold text-cyan-400">EGP {cart.total.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm text-gray-300 flex-row-reverse">
-                <span>طريقة الدفع</span>
-                <span className="font-bold text-white">
-                  {paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}
-                </span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setShowPaymentConfirm(false)}
-                className="py-3 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-sm"
-              >
-                رجوع وتعديل
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowPaymentConfirm(false); handleCompleteOrder(); }}
-                className="py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl text-sm"
-              >
-                تأكيد الدفع
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* RECEIPT PRINTING PREVIEW MODAL */}
-      {showPrintModal && receiptOrder && (
-        <div className="fixed inset-0 z-45 bg-black/85 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }}>
-          <div className="w-full max-w-sm glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button 
-              onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2 flex-row-reverse">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-              <span>تم الدفع ومعاينة الفاتورة</span>
-            </h3>
-            <p className="text-xs text-gray-400 mb-6">معاينة ريسيت العميل. اضغط على زرار الطباعة للإخراج.</p>
-            
-            {/* Mini invoice representation (Customer + Barista KOT) */}
-            <div className="p-3 bg-white text-black font-mono rounded-lg shadow-inner max-h-[350px] overflow-y-auto">
-              <ReceiptLayout preview />
-              <div className="kot-divider text-gray-500 my-4 border-t-2 border-dashed border-gray-400 pt-2 text-[10px] text-center font-bold">
-                - - - بون البار / المطبخ - - -
-              </div>
-              <BaristaKotLayout preview />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mt-6">
-              <button
-                onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }}
-                className="py-3.5 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-xs"
-              >
-                قفل الفاتورة
-              </button>
-              
-              <button
-                onClick={handlePrintReceipt}
-                className="py-3.5 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>طباعة مرة أخرى</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-
-      {/* CASHIER INVENTORY MODAL */}
-      {showInventoryModal && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowInventoryModal(false)}>
-          <div className="w-full max-w-3xl glass-panel rounded-2xl p-6 relative text-right max-h-[85vh] overflow-y-auto" dir="rtl" onClick={(event) => event.stopPropagation()}>
-            <button 
-              onClick={() => setShowInventoryModal(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {/* Tab navigation inside inventory modal */}
-            <div className="flex gap-2 border-b border-white/5 pb-4 mb-4 flex-row-reverse justify-start">
-              <button
-                onClick={() => setInventoryAction('view')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                  inventoryAction === 'view' || inventoryAction === 'restock'
-                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
-                    : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
-                }`}
-              >
-                جرد ومخزن الخامات
-              </button>
-              <button
-                onClick={() => setInventoryAction('recipes')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                  inventoryAction === 'recipes'
-                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
-                    : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
-                }`}
-              >
-                الوصفات ومقادير الأصناف
-              </button>
-              <button
-                onClick={() => setInventoryAction('addMaterial')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                  inventoryAction === 'addMaterial'
-                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                    : 'bg-white/5 text-gray-400 border-transparent hover:bg-white/10'
-                }`}
-              >
-                + إضافة خامة جديدة
-              </button>
-            </div>
-            
-            {inventoryAction === 'view' && (
-              <>
-                <h3 className="text-lg font-bold text-white mb-1">مخزن وجرد الخامات</h3>
-                <p className="text-[11px] text-gray-400 mb-4">تابع رصيد المكونات والخامات الحالي، وسجل التوريدات الجديدة.</p>
-                
-                {loadingInventory ? (
-                  <div className="flex items-center justify-center py-12 gap-2 text-sm text-gray-400">
-                    <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
-                    <span>جاري تحميل بيانات وجرد المخزن...</span>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between text-[10px] text-gray-400 px-1">
-                      <span>اسحب الجدول يمينًا ويسارًا أو استخدم الأسهم</span>
-                      <div className="flex gap-1" dir="ltr"><button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: -280, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">←</button><button type="button" onClick={() => inventoryTableScrollRef.current?.scrollBy({ left: 280, behavior: 'smooth' })} className="px-2 py-1 rounded bg-white/10 text-white">→</button></div>
-                    </div>
-                    <div ref={inventoryTableScrollRef} className="w-full overflow-auto touch-auto overscroll-contain rounded-xl border border-white/5 max-h-[350px]" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'auto' }}>
-                      <table className="min-w-[680px] text-right text-xs border-collapse">
-                        <thead>
-                          <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400 sticky top-0 z-10">
-                            <th className="p-3">اسم المادة الخام</th>
-                            <th className="p-3">الرصيد الحالي بالمخزن</th>
-                            <th className="p-3">حد التنبيه للنفاد</th>
-                            <th className="p-3">الحالة</th>
-                            <th className="p-3 text-left">العمليات</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {inventoryMaterials.map((mat) => (
-                            <tr key={mat.id} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
-                              <td className="p-3 font-semibold text-white">{mat.name}</td>
-                              <td className="p-3 font-mono font-bold text-cyan-400">
-                                {mat.stockQty} {mat.deductUnit}
-                                <span className="text-[10px] text-gray-500 block font-normal mt-0.5">
-                                  (~{(mat.stockQty / mat.conversionFactor).toFixed(2)} {mat.purchaseUnit})
-                                </span>
-                              </td>
-                              <td className="p-3 text-gray-400">{mat.minStockLevel} {mat.deductUnit}</td>
-                              <td className="p-3">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  mat.stockQty < mat.minStockLevel 
-                                    ? 'bg-red-500/10 text-red-400 border border-red-500/15' 
-                                    : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/15'
-                                }`}>
-                                  {mat.stockQty < mat.minStockLevel ? 'ناقص' : 'آمن'}
-                                </span>
-                              </td>
-                              <td className="p-3 text-left space-x-2 space-x-reverse">
-                                <button
-                                  onClick={() => { setSelectedMatId(mat.id); setInventoryQty(''); setInventoryAction('restock'); }}
-                                  className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded-lg text-[10px] font-bold transition-all"
-                                >
-                                  توريد
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {inventoryAction === 'restock' && (
-              <>
-                <h3 className="text-xl font-bold text-white mb-2">توريد وشحن خامة للمخزن</h3>
-                <p className="text-xs text-gray-400 mb-6">
-                  الخامة: <span className="text-cyan-400 font-bold">{inventoryMaterials.find(m => m.id === selectedMatId)?.name}</span>
-                  <br />
-                  اكتب الكمية الموردة بوحدة الشراء الكبرى (مثال: بالكيلو، بالكرتونة). سيتم تحويلها تلقائياً.
-                </p>
-                
-                <form onSubmit={handlePOSRestockSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">
-                      الكمية المراد إضافتها (بوحدة الشراء: {inventoryMaterials.find(m => m.id === selectedMatId)?.purchaseUnit})
+                    <label className="block text-xs font-bold text-gray-300 mb-2 flex items-center justify-between">
+                      <span>الوحدة وطريقة البيع:</span>
+                      <span className="text-[11px] font-normal text-emerald-400">اختار الطريقة المناسبة للصنف</span>
                     </label>
-                    <input
-                      type="number"
-                      required
-                      value={inventoryQty}
-                      onChange={(e) => setInventoryQty(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-cyan-500 text-right"
-                      placeholder="مثال: 5"
-                      min="0"
-                      step="any"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-2">إجمالي مبلغ التوريد (EGP)</label>
-                    <input
-                      type="number"
-                      required
-                      value={inventoryRestockAmount}
-                      onChange={(e) => setInventoryRestockAmount(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-4 text-white focus:outline-none focus:border-amber-500 text-right"
-                      placeholder="مثال: 500"
-                      min="0"
-                      step="0.01"
-                    />
-                  </div>
-
-                  <div className="flex gap-3 justify-end pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setInventoryAction('view')}
-                      className="px-4 py-2 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-xs"
-                    >
-                      رجوع
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={submitInventoryLoading}
-                      className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white font-bold rounded-xl text-xs"
-                    >
-                      {submitInventoryLoading ? 'جاري التوريد...' : 'تأكيد إضافة الرصيد'}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-
-            {inventoryAction === 'addMaterial' && (
-              <>
-                <h3 className="text-xl font-bold text-white mb-2">إضافة مادة خام جديدة للمخزن</h3>
-                <p className="text-xs text-gray-400 mb-6">سجل تفاصيل المادة الخام الجديدة، رصيد الافتتاح، ووحدات القياس.</p>
-                
-                <form onSubmit={handlePOSAddMaterialSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-400 mb-1.5">اسم المادة الخام</label>
-                    <input
-                      type="text"
-                      required
-                      value={newMatName}
-                      onChange={(e) => setNewMatName(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
-                      placeholder="مثال: حليب كامل الدسم المراعي"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-400 mb-1.5">الرصيد الافتتاحي</label>
-                      <input
-                        type="number"
-                        value={newMatStock}
-                        onChange={(e) => setNewMatStock(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
-                        placeholder="0.00"
-                        min="0"
-                        step="any"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-400 mb-1.5">حد التنبيه للنفاد</label>
-                      <input
-                        type="number"
-                        value={newMatMinStock}
-                        onChange={(e) => setNewMatMinStock(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-cyan-500 text-right"
-                        placeholder="مثال: 10"
-                        min="0"
-                        step="any"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الشراء (الكبرى)</label>
-                      <input
-                        type="text"
-                        required
-                        value={newMatPurchaseUnit}
-                        onChange={(e) => setNewMatPurchaseUnit(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                        placeholder="مثال: علبة"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">وحدة الاستهلاك (الصغرى)</label>
-                      <input
-                        type="text"
-                        required
-                        value={newMatDeductUnit}
-                        onChange={(e) => setNewMatDeductUnit(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                        placeholder="مثال: مل"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-semibold text-gray-400 mb-1.5">معامل التحويل</label>
-                      <input
-                        type="number"
-                        required
-                        value={newMatConvFactor}
-                        onChange={(e) => setNewMatConvFactor(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                        placeholder="مثال: 1000"
-                        min="1"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 justify-end pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setInventoryAction('view')}
-                      className="px-4 py-2 border border-white/10 hover:bg-white/5 text-white font-semibold rounded-xl text-xs"
-                    >
-                      إلغاء
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={submitInventoryLoading}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold rounded-xl text-xs"
-                    >
-                      {submitInventoryLoading ? 'جاري الحفظ...' : 'تأكيد وحفظ'}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-
-            {inventoryAction === 'recipes' && (
-              <div className="space-y-4 text-right" dir="rtl">
-                <div className="text-right">
-                  <h3 className="text-lg font-bold text-white">إدارة وصفات المنتجات</h3>
-                  <p className="text-[11px] text-gray-400">حدد مكونات كل صنف أو إضافة لخصمها تلقائياً من مخزنك عند البيع.</p>
-                </div>
-
-                {loadingRecipes ? (
-                  <div className="flex items-center justify-center py-12 gap-2 text-sm text-gray-400">
-                    <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
-                    <span>جاري تحميل قائمة الوصفات...</span>
-                  </div>
-                ) : selectedRecipeTarget ? (
-                  // --- CASHER RECIPE EDITOR ---
-                  <div className="border border-white/5 rounded-xl p-4 bg-slate-900/40 space-y-4 text-right" dir="rtl">
-                    <div className="flex items-center justify-between border-b border-white/5 pb-2 flex-row-reverse">
-                      <h4 className="font-bold text-white text-xs font-sans">تعديل وصفة: {selectedRecipeTarget.name}</h4>
+                    <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedRecipeTarget(null)}
-                        className="text-[10px] text-cyan-400 hover:underline"
+                        onClick={() => setProduceUnit('كيلو')}
+                        className={`py-2.5 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                          produceUnit === 'كيلو'
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg shadow-emerald-500/25 scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
                       >
-                        رجوع للوصفات
+                        <Scale className="w-4 h-4" />
+                        <span>كيلو (ميزان)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setProduceUnit('حزمة')}
+                        className={`py-2.5 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                          produceUnit === 'حزمة'
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg shadow-emerald-500/25 scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <span>حزمة (ربطة)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setProduceUnit('قطعة')}
+                        className={`py-2.5 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                          produceUnit === 'قطعة'
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg shadow-emerald-500/25 scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <span>قطعة (بالواحدة)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. 3-Way Auto-Calculator: Cost, Price, Margin % */}
+                  <div className="p-3.5 bg-slate-900/90 border border-white/10 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <Calculator className="w-4 h-4 text-emerald-400" />
+                        <span>حسبة الأسعار والمكسب (3 خانات ذكية)</span>
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {/* Cost Input */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                          سعر التكلفة (شراء):
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={produceCost}
+                            onChange={(e) => handleProduceCostChange(e.target.value)}
+                            placeholder="مثلاً 20"
+                            className="w-full bg-[#080d1a] border border-white/15 focus:border-amber-400 rounded-xl py-2 px-3 text-sm text-white font-mono text-center focus:outline-none transition-colors"
+                          />
+                          <span className="absolute left-2.5 top-2.5 text-[10px] text-gray-500">ج.م</span>
+                        </div>
+                        <span className="text-[9px] text-gray-500 block text-center mt-1">سعر الجملة</span>
+                      </div>
+
+                      {/* Price Input (Main Highlight) */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-emerald-300 mb-1">
+                          سعر البيع الحالي:
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={producePrice}
+                            onChange={(e) => handleProducePriceChange(e.target.value)}
+                            placeholder="مثلاً 25"
+                            className="w-full bg-[#080d1a] border-2 border-emerald-500/60 focus:border-emerald-400 rounded-xl py-2 px-3 text-sm font-black text-emerald-300 font-mono text-center focus:outline-none transition-colors shadow-inner"
+                          />
+                          <span className="absolute left-2.5 top-2.5 text-[10px] text-emerald-400 font-bold">ج.م</span>
+                        </div>
+                        <span className="text-[9px] text-emerald-400 font-medium block text-center mt-1">
+                          السعر لـ {produceUnit}
+                        </span>
+                      </div>
+
+                      {/* Margin % Input */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                          نسبة المكسب:
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={produceMargin}
+                            onChange={(e) => handleProduceMarginChange(e.target.value)}
+                            placeholder="مثلاً 25%"
+                            className="w-full bg-[#080d1a] border border-white/15 focus:border-yellow-400 rounded-xl py-2 px-3 text-sm text-yellow-300 font-mono text-center focus:outline-none transition-colors"
+                          />
+                          <span className="absolute left-2.5 top-2.5 text-[10px] text-yellow-500 font-bold">%</span>
+                        </div>
+                        <span className="text-[9px] text-gray-500 block text-center mt-1">هامش الربح %</span>
+                      </div>
+                    </div>
+
+                    {/* Live Profit Banner */}
+                    <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between flex-row-reverse text-xs">
+                      <div className="flex items-center gap-1.5 text-gray-300">
+                        <TrendingUp className="w-4 h-4 text-emerald-400" />
+                        <span>صافي ربح {produceUnit}:</span>
+                        <strong className={`font-mono ${unitProfit >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}`}>
+                          {unitProfit.toFixed(2)} ج.م
+                        </strong>
+                      </div>
+
+                      <div>
+                        {unitProfit > 0 ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
+                            ربح {produceMargin}%
+                          </span>
+                        ) : unitProfit === 0 ? (
+                          <span className="px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-300 font-bold text-[10px]">
+                            سعر التكلفة
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px]">
+                            أقل من التكلفة بخسارة!
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Live Scale Weight Card for Produce */}
+                  {produceUnit === 'كيلو' && (
+                    <div className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                      scale.isConnected 
+                        ? 'bg-emerald-500/10 border-emerald-500/30' 
+                        : 'bg-white/5 border-white/10'
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                          scale.isConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-gray-400'
+                        }`}>
+                          <Scale className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-bold text-white">
+                              {scale.isConnected ? 'الميزان الإلكتروني' : 'الميزان الإلكتروني (RS232)'}
+                            </span>
+                            {scale.isConnected && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                                scale.isStable ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                              }`}>
+                                {scale.isStable ? 'مستقر' : 'جاري الوزن...'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-gray-300 font-mono mt-0.5">
+                            {scale.isConnected ? (
+                              <>الوزن الحالي: <strong className="text-emerald-400 font-black text-sm">{scale.currentWeight.toFixed(3)}</strong> كجم</>
+                            ) : (
+                              'الميزان غير متصل - اضغط للربط'
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {scale.isConnected ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (scale.currentWeight > 0) {
+                              setProduceQty(scale.currentWeight.toFixed(3));
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1 cursor-pointer"
+                          title="اسحب الوزن الحالي من الميزان"
+                        >
+                          <span>سحب الوزن</span>
+                          <span className="font-mono">({scale.currentWeight.toFixed(3)})</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowScaleModal(true)}
+                          className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          <Scale className="w-3.5 h-3.5 text-amber-400" />
+                          <span>ربط الميزان</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 3. Quantity / Weight Input + Quick Chips */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-gray-300">
+                        {produceUnit === 'كيلو' ? 'الوزن من الميزان (كجم):' : 'العدد المطلوب:'}
+                      </label>
+                      <span className="text-[11px] text-gray-400 font-mono">
+                        الوحدة: {produceUnit}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = parseFloat(produceQty) || 1;
+                          const step = produceUnit === 'كيلو' ? 0.25 : 1;
+                          setProduceQty((Math.round((current + step) * 1000) / 1000).toString());
+                        }}
+                        className="w-11 h-11 rounded-xl bg-white/10 hover:bg-emerald-500/30 text-emerald-300 flex items-center justify-center font-bold text-lg cursor-pointer transition-all active:scale-95"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+
+                      <div className="flex-1 relative">
+                        <input
+                          type="number"
+                          step={produceUnit === 'كيلو' ? '0.05' : '1'}
+                          min="0.05"
+                          value={produceQty}
+                          onChange={(e) => setProduceQty(e.target.value)}
+                          placeholder="1"
+                          className="w-full bg-slate-900 border-2 border-white/20 focus:border-emerald-400 rounded-xl py-2.5 px-3 text-lg font-black text-white font-mono text-center focus:outline-none"
+                        />
+                        <span className="absolute left-3 top-3 text-xs text-gray-400 font-bold">
+                          {produceUnit}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = parseFloat(produceQty) || 1;
+                          const step = produceUnit === 'كيلو' ? 0.25 : 1;
+                          const nextVal = Math.max(step, Math.round((current - step) * 1000) / 1000);
+                          setProduceQty(nextVal.toString());
+                        }}
+                        className="w-11 h-11 rounded-xl bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center font-bold text-lg cursor-pointer transition-all active:scale-95"
+                      >
+                        <Minus className="w-5 h-5" />
                       </button>
                     </div>
 
-                    <form onSubmit={handlePOSSaveRecipeSubmit} className="space-y-4">
-                      <div className="space-y-2">
-                        {recipeIngredients.map((ing, idx) => (
-                          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                            <div className="col-span-6">
-                              <select
-                                required
-                                value={ing.rawMaterialId}
-                                onChange={(e) => updateRecipeRow(idx, 'rawMaterialId', e.target.value)}
-                                className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 px-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                              >
-                                <option value="">اختار المادة الخام...</option>
-                                {inventoryMaterials.map((m) => (
-                                  <option key={m.id} value={m.id}>{m.name} ({m.deductUnit})</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="col-span-4 relative">
-                              <input
-                                type="number"
-                                required
-                                value={ing.quantity || ''}
-                                onChange={(e) => updateRecipeRow(idx, 'quantity', e.target.value)}
-                                className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 pl-10 pr-3 text-[11px] text-white focus:outline-none focus:border-cyan-500 text-right"
-                                placeholder="0.00"
-                                min="0"
-                                step="any"
-                              />
-                              <span className="absolute left-2.5 top-1.5 text-[9px] text-gray-500 font-mono">
-                                {inventoryMaterials.find(m => m.id === ing.rawMaterialId)?.deductUnit || ''}
-                              </span>
-                            </div>
-                            <div className="col-span-2 text-left">
-                              <button
-                                type="button"
-                                onClick={() => removeRecipeRow(idx)}
-                                className="p-1 text-rose-500 hover:text-rose-400"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                    {/* Quick Select Chips */}
+                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                      <span className="text-[10px] text-gray-400 shrink-0 ml-1">اختيار سريع:</span>
+                      {produceUnit === 'كيلو' ? (
+                        <>
+                          {[
+                            { label: '¼ ربع', val: '0.25' },
+                            { label: '½ نص', val: '0.5' },
+                            { label: '¾ إلا ربع', val: '0.75' },
+                            { label: '1 كجم', val: '1' },
+                            { label: '1.5 كجم', val: '1.5' },
+                            { label: '2 كجم', val: '2' },
+                            { label: '2.5 كجم', val: '2.5' },
+                            { label: '3 كجم', val: '3' },
+                            { label: '5 كجم', val: '5' },
+                          ].map((chip) => (
+                            <button
+                              key={chip.val}
+                              type="button"
+                              onClick={() => setProduceQty(chip.val)}
+                              className={`px-2 py-1 rounded-lg text-xs font-bold font-mono transition-all cursor-pointer ${
+                                produceQty === chip.val
+                                  ? 'bg-emerald-500 text-slate-950 font-black'
+                                  : 'bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white border border-white/5'
+                              }`}
+                            >
+                              {chip.label}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <>
+                          {['1', '2', '3', '4', '5', '6', '10', '12'].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setProduceQty(num)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono transition-all cursor-pointer ${
+                                produceQty === num
+                                  ? 'bg-emerald-500 text-slate-950 font-black'
+                                  : 'bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white border border-white/5'
+                              }`}
+                            >
+                              {num}
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 4. Total Calculation Summary Card */}
+                  <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl flex items-center justify-between flex-row-reverse">
+                    <div className="text-right">
+                      <span className="text-[11px] text-gray-300 block">إجمالي سعر الصنف للزبون:</span>
+                      <div className="flex items-baseline gap-1 mt-0.5">
+                        <span className="text-xl font-black text-emerald-300 font-mono">
+                          {totalItemPrice.toFixed(2)}
+                        </span>
+                        <span className="text-xs text-emerald-400 font-bold">جنيه</span>
+                      </div>
+                    </div>
+
+                    <div className="text-left text-xs text-gray-300 font-mono">
+                      <div className="text-gray-400 text-[11px]">
+                        {currentQtyVal} {produceUnit} × {currentPriceVal.toFixed(2)} ج
+                      </div>
+                      {currentCostVal > 0 && (
+                        <div className="text-yellow-400 text-[10px] mt-0.5">
+                          إجمالي الربح: {totalProfit.toFixed(2)} ج ({produceMargin}%)
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 5. Save Price Permanently Checkbox */}
+                  <div 
+                    className="p-3 bg-slate-900/60 border border-white/10 rounded-xl flex items-center justify-between gap-3 cursor-pointer hover:border-white/20 transition-all"
+                    onClick={() => setSavePricePermanently(!savePricePermanently)}
+                  >
+                    <div className="text-right">
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>حفظ السعر الجديد في النظام للمرات القادمة</span>
+                      </div>
+                      <span className="text-[10px] text-gray-400 block mt-0.5">
+                        لو علمت عليها، السيستم هيسجل إن ده سعر بيع وتكلفة الصنف من هنا ورايح
+                      </span>
+                    </div>
+
+                    <input
+                      type="checkbox"
+                      checked={savePricePermanently}
+                      onChange={(e) => setSavePricePermanently(e.target.checked)}
+                      className="w-4 h-4 rounded text-emerald-500 accent-emerald-500 cursor-pointer shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+
+                  {/* 6. Action Buttons */}
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProduceModal(false);
+                        setSelectedProduceItem(null);
+                        setEditingCartItemId(null);
+                      }}
+                      className="py-3 border border-white/15 hover:bg-white/5 text-gray-300 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                    >
+                      إلغاء (خروج)
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleConfirmProduceItem}
+                      className="py-3 bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-600 hover:from-emerald-600 hover:to-green-700 text-white font-black rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>تأكيد الإضافة إلى الفاتورة (Enter)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Returns / Refund Modal */}
+        {showReturnModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowReturnModal(false)}>
+            <div className="w-full max-w-2xl glass-panel rounded-2xl p-6 relative text-right max-h-[85vh] overflow-y-auto" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => setShowReturnModal(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+              <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
+                <RotateCcw className="w-5 h-5 text-rose-400" />
+                <span>مرتجع أصناف / فاتورة للعميل</span>
+              </h3>
+              <p className="text-xs text-gray-400 mb-4">اختار الفاتورة اللي الزبون هيرجع منها أو اكتب رقم الوصل</p>
+
+              {!selectedReturnOrder ? (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-gray-400 absolute right-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={returnSearchQuery}
+                      onChange={(e) => setReturnSearchQuery(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl pr-9 pl-4 py-2 text-xs text-white text-right"
+                      placeholder="ابحث برقم الوصل (مثال: BF-...)..."
+                    />
+                  </div>
+
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    {recentCompletedOrders
+                      .filter((o) => !returnSearchQuery || o.receiptNumber?.includes(returnSearchQuery))
+                      .map((ord) => (
+                        <div
+                          key={ord.id}
+                          onClick={() => setSelectedReturnOrder(ord)}
+                          className="p-3 bg-slate-900/60 hover:bg-white/5 border border-white/5 rounded-xl flex items-center justify-between cursor-pointer transition-all flex-row-reverse"
+                        >
+                          <div className="text-right">
+                            <span className="font-bold text-xs text-white">{ord.receiptNumber}</span>
+                            <span className="text-[10px] text-gray-400 block">{new Date(ord.createdAt).toLocaleTimeString()} - {getPaymentMethodArabic(ord.paymentMethod)}</span>
                           </div>
-                        ))}
+                          <span className="text-emerald-400 font-bold text-xs">{ord.total.toFixed(2)} جنيه</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="p-3 bg-white/5 border border-white/10 rounded-xl flex justify-between items-center flex-row-reverse">
+                    <div>
+                      <span className="font-bold text-sm text-white">وصل: {selectedReturnOrder.receiptNumber}</span>
+                      <span className="text-xs text-gray-400 block">الإجمالي: {selectedReturnOrder.total.toFixed(2)} جنيه</span>
+                    </div>
+                    <button onClick={() => setSelectedReturnOrder(null)} className="text-xs text-emerald-400 underline cursor-pointer">اختار فاتورة تانية</button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">سبب الترجيع إيه؟</label>
+                    <select value={returnReason} onChange={(e) => setReturnReason(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right">
+                      <option value="الزبون غير رأيه">الزبون غير رأيه</option>
+                      <option value="غلطة في الميزان أو الصنف">غلطة في الميزان أو الصنف</option>
+                      <option value="حاجة مش عاجبة الزبون أو تالفة">حاجة مش عاجبة الزبون أو تالفة</option>
+                      <option value="أسباب تانية">سبب تاني</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="restock" checked={returnRestock} onChange={(e) => setReturnRestock(e.target.checked)} className="rounded" />
+                    <label htmlFor="restock" className="text-xs text-gray-300 cursor-pointer">رجع البضاعة للمحل والميزان تاني</label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <button onClick={() => setSelectedReturnOrder(null)} className="py-2.5 border border-white/10 text-white rounded-xl text-xs cursor-pointer">إلغاء</button>
+                    <button disabled={submittingReturn} onClick={handleProcessReturn} className="py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs cursor-pointer">
+                      {submittingReturn ? 'جاري الترجيع...' : `تأكيد ترجيع ${selectedReturnOrder.total.toFixed(2)} جنيه للزبون`}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Payment Confirm Modal */}
+        {showPaymentConfirm && cart && (
+          <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowPaymentConfirm(false)}>
+            <div className="w-full max-w-sm glass-panel rounded-2xl p-6 text-right" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-bold text-white">تأكيد استلام الفلوس وقفل الحساب</h3>
+              <div className="my-4 p-3.5 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                <div className="flex justify-between text-xs text-gray-300 flex-row-reverse">
+                  <span>المطلوب من الزبون</span>
+                  <span className="font-bold text-emerald-400 text-base">{cart.total.toFixed(2)} جنيه</span>
+                </div>
+                <div className="flex justify-between text-xs text-gray-300 flex-row-reverse">
+                  <span>طريقة الدفع</span>
+                  <span className="font-bold text-white">{getPaymentMethodArabic(paymentMethod)}</span>
+                </div>
+                {cart.discount > 0 && (
+                  <div className="flex justify-between text-xs text-rose-400 flex-row-reverse">
+                    <span>الخصم المطبق</span>
+                    <span>-{cart.discount.toFixed(2)} جنيه ({discountReason || 'بدون سبب'})</span>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => setShowPaymentConfirm(false)} className="py-2.5 border border-white/10 text-white rounded-xl text-xs cursor-pointer">ارجع للفاتورة</button>
+                <button 
+                  type="button" 
+                  onClick={() => { 
+                    setShowPaymentConfirm(false); 
+                    handleCompleteOrder(); 
+                  }} 
+                  className="py-2.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20 active:scale-95 transition-all"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة الإيصال</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* RECEIPT PRINTING PREVIEW MODAL */}
+        {showPrintModal && receiptOrder && (
+          <div className="fixed inset-0 z-45 bg-black/85 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }}>
+            <div className="w-full max-w-sm glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }} className="absolute top-4 left-4 text-gray-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+              <h3 className="text-base font-bold text-white mb-2 flex items-center gap-2 flex-row-reverse">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <span>تم الدفع بنجاح! وده شكل وصل الزبون</span>
+              </h3>
+              
+              <div className="p-3 bg-white text-black font-mono rounded-lg shadow-inner max-h-[380px] overflow-y-auto">
+                <ReceiptLayout preview />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <button onClick={() => { setShowPrintModal(false); setReceiptOrder(null); }} className="py-2.5 border border-white/10 text-white rounded-xl text-xs cursor-pointer">خلاص تمام (اقفل)</button>
+                <button onClick={() => window.print()} className="py-2.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer">
+                  <Printer className="w-4 h-4" />
+                  <span>إعادة طباعة الإيصال</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* OPEN SHIFT DIALOG */}
+        {showOpenShift && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowOpenShift(false)}>
+            <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => setShowOpenShift(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2.5 mb-1">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">فتح شفت ويومية جديدة - بانانا فود</h3>
+                  <p className="text-xs text-gray-400">اكتب اسم الكاشير ومبلغ الفكة اللي هتبدأ بيه في الدرج للبيع</p>
+                </div>
+              </div>
+
+              <form onSubmit={handleOpenShiftSubmit} className="space-y-4 mt-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1">اسم الكاشير المسؤول عن الوردية *</label>
+                  <input
+                    required
+                    type="text"
+                    value={cashierName}
+                    onChange={(e) => setCashierName(e.target.value)}
+                    placeholder="اكتب اسم الكاشير (مثال: أحمد حسن)..."
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-3 text-white text-xs text-right placeholder-gray-500 focus:border-emerald-500"
+                  />
+
+                  {/* Quick Select Saved Cashier Names */}
+                  {savedCashierNames.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="text-[10px] text-gray-400 w-full">أسماء سريعة:</span>
+                      {savedCashierNames.map((cn) => (
+                        <button
+                          key={cn.id}
+                          type="button"
+                          onClick={() => setCashierName(cn.name)}
+                          className="px-2 py-0.5 rounded-lg bg-white/5 hover:bg-emerald-500/20 text-gray-300 hover:text-emerald-300 border border-white/5 text-[10px] transition-all cursor-pointer"
+                        >
+                          {cn.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1">مبلغ الفكة اللي هتبدأ بيه في الدرج (لو فيه)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={floatCash}
+                    onChange={(e) => setFloatCash(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl py-2.5 px-3 text-white text-xs text-right placeholder-gray-500 focus:border-emerald-500 font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowOpenShift(false)}
+                    className="py-2.5 border border-white/10 text-white rounded-xl text-xs hover:bg-white/5 cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    className="py-2.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-500/20 cursor-pointer"
+                  >
+                    تأكيد فتح الشفت
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* CLOSE SHIFT DIALOG (Cash and InstaPay only) */}
+        {showCloseShift && (
+          <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowCloseShift(false)}>
+            <div className="w-full max-w-lg glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => setShowCloseShift(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+              <h3 className="text-xl font-bold text-white mb-1">تسوية وتصفية الشفت واليومية</h3>
+              <p className="text-xs text-gray-400 mb-4">عد الفلوس اللي في الدرج وطابقها مع الحسابات المسجلة في السيستم.</p>
+
+              {/* Expected Totals Card */}
+              <div className="bg-slate-900/80 border border-white/10 rounded-xl p-3.5 mb-4">
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="text-xs font-bold text-gray-200">المحسوب في السيستم:</span>
+                  <button
+                    type="button"
+                    onClick={handleAutoFillExpected}
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer"
+                  >
+                    نزّل المبلغ المحسوب تلقائي
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-center text-xs">
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                    <span className="block text-[10px] text-emerald-300 mb-0.5">الكاش المفروض في الدرج</span>
+                    <strong className="text-emerald-400 text-base font-bold font-mono">{(activeShift?.expectedCash || 0).toFixed(2)} جنيه</strong>
+                  </div>
+                  <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                    <span className="block text-[10px] text-purple-300 mb-0.5">إنستا باي المتوقع</span>
+                    <strong className="text-purple-400 text-base font-bold font-mono">{(activeShift?.expectedInstaPay || 0).toFixed(2)} جنيه</strong>
+                  </div>
+                </div>
+              </div>
+
+              <form onSubmit={handleCloseShiftSubmit} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-300">الكاش الفعلي اللي عديته في الدرج</label>
+                      <span className="text-[10px] text-emerald-400 font-mono font-semibold">{(activeShift?.expectedCash || 0).toFixed(0)} ج</span>
+                    </div>
+                    <input 
+                      type="number" 
+                      step="any" 
+                      required 
+                      value={closedCash} 
+                      onChange={(e) => setClosedCash(e.target.value)} 
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-white text-xs text-right font-mono focus:border-emerald-500" 
+                      placeholder="0.00" 
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-300">مجموع إنستا باي الفعلي ع التليفون</label>
+                      <span className="text-[10px] text-purple-400 font-mono font-semibold">{(activeShift?.expectedInstaPay || 0).toFixed(0)} ج</span>
+                    </div>
+                    <input 
+                      type="number" 
+                      step="any" 
+                      value={closedInstaPay} 
+                      onChange={(e) => setClosedInstaPay(e.target.value)} 
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 px-3 text-white text-xs text-right font-mono focus:border-purple-500" 
+                      placeholder="0.00" 
+                    />
+                  </div>
+                </div>
+
+                {/* Live Cash Variance Preview */}
+                {closedCash.trim() !== '' && (() => {
+                  const entered = parseFloat(closedCash) || 0;
+                  const expected = activeShift?.expectedCash || 0;
+                  const diff = entered - expected;
+                  if (diff < -0.01) {
+                    return (
+                      <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-between text-xs">
+                        <span className="text-rose-300 font-bold flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span>تنبيه: يوجد عجز في كاش الدرج بمقدار:</span>
+                        </span>
+                        <span className="font-mono font-bold text-rose-400 text-sm">{Math.abs(diff).toFixed(2)}- جنيه</span>
+                      </div>
+                    );
+                  } else if (diff > 0.01) {
+                    return (
+                      <div className="p-3 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-between text-xs">
+                        <span className="text-cyan-300 font-bold flex items-center gap-1.5">
+                          <span>يوجد زيادة في كاش الدرج بمقدار:</span>
+                        </span>
+                        <span className="font-mono font-bold text-cyan-400 text-sm">+{diff.toFixed(2)} جنيه</span>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between text-xs">
+                        <span className="text-emerald-300 font-bold flex items-center gap-1.5">
+                          <span>الكاش مطابق لحسابات السيستم بالمليم:</span>
+                        </span>
+                        <span className="font-mono font-bold text-emerald-400 text-sm">0.00 جنيه (مطابق)</span>
+                      </div>
+                    );
+                  }
+                })()}
+
+                {/* Live InstaPay Variance Preview */}
+                {(closedInstaPay.trim() !== '' || (activeShift?.expectedInstaPay || 0) > 0) && (() => {
+                  const entered = parseFloat(closedInstaPay) || 0;
+                  const expected = activeShift?.expectedInstaPay || 0;
+                  const diff = entered - expected;
+                  if (diff < -0.01) {
+                    return (
+                      <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-between text-xs">
+                        <span className="text-rose-300 font-bold flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span>تنبيه: يوجد عجز في تحويلات إنستا باي بمقدار:</span>
+                        </span>
+                        <span className="font-mono font-bold text-rose-400 text-sm">{Math.abs(diff).toFixed(2)}- جنيه</span>
+                      </div>
+                    );
+                  } else if (diff > 0.01) {
+                    return (
+                      <div className="p-3 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-between text-xs">
+                        <span className="text-purple-300 font-bold flex items-center gap-1.5">
+                          <span>يوجد زيادة في تحويلات إنستا باي بمقدار:</span>
+                        </span>
+                        <span className="font-mono font-bold text-purple-400 text-sm">+{diff.toFixed(2)} جنيه</span>
+                      </div>
+                    );
+                  } else if (closedInstaPay.trim() !== '') {
+                    return (
+                      <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between text-xs">
+                        <span className="text-emerald-300 font-bold flex items-center gap-1.5">
+                          <span>إنستا باي مطابق لتحويلات السيستم بالمليم:</span>
+                        </span>
+                        <span className="font-mono font-bold text-emerald-400 text-sm">0.00 جنيه (مطابق)</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                <button type="submit" className="w-full py-3 mt-3 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white font-bold rounded-xl text-xs shadow-lg shadow-rose-500/20 transition-all cursor-pointer">
+                  تأكيد تصفية اليومية وقفل الشفت
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Closed Shift Summary Report Modal */}
+        {showShiftReportModal && closedShiftReport && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowShiftReportModal(false)}>
+            <div className="w-full max-w-md glass-panel rounded-2xl p-6 relative text-right" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => setShowShiftReportModal(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+              <div className="text-center mb-4">
+                <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-2">
+                  <Lock className="w-6 h-6 text-emerald-400" />
+                </div>
+                <h3 className="text-lg font-bold text-white">تقرير تصفية وتقفيل الوردية</h3>
+                <p className="text-xs text-gray-400">تم إغلاق الوردية وحفظ كافة الحسابات بنجاح</p>
+              </div>
+
+              <div className="space-y-3 mb-5">
+                <div className="p-3 bg-slate-900/70 border border-white/10 rounded-xl space-y-2 text-xs">
+                  <div className="flex justify-between items-center text-gray-300">
+                    <span className="text-gray-400">الكاشير:</span>
+                    <span className="font-bold text-cyan-300">{closedShiftReport.cashierName || 'كاشير'}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-gray-300">
+                    <span className="text-gray-400">تاريخ ووقت الفتح:</span>
+                    <span className="font-mono text-gray-200">
+                      {new Date(closedShiftReport.openedAt).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-gray-300">
+                    <span className="text-gray-400">تاريخ ووقت الإغلاق:</span>
+                    <span className="font-mono text-gray-200">
+                      {new Date(closedShiftReport.closedAt).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' })}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Cash Balance Breakdown */}
+                <div className="p-3.5 bg-slate-900/90 border border-white/10 rounded-xl space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">الكاش المتوقع في الدرج (السيستم):</span>
+                    <span className="font-mono font-bold text-emerald-400 text-sm">
+                      {(closedShiftReport.expectedCash || 0).toFixed(2)} ج
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">الكاش الفعلي المسلم من الكاشير:</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {(closedShiftReport.closedCash || 0).toFixed(2)} ج
+                    </span>
+                  </div>
+
+                  {/* Variance Banner */}
+                  <div className="pt-2 border-t border-white/10">
+                    {closedShiftReport.varianceCash < -0.01 ? (
+                      <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-center">
+                        <span className="text-[11px] text-rose-300 block font-semibold">نتيجة المطابقة: يوجد عجز في الكاش</span>
+                        <span className="text-xl font-bold font-mono text-rose-400 mt-0.5 block">
+                          عجز: {Math.abs(closedShiftReport.varianceCash).toFixed(2)}- جنيه
+                        </span>
+                        <span className="text-[10px] text-rose-300/80 mt-1 block">تم تسجيل هذا العجز في تقرير اليومية وسجلات الإدارة</span>
+                      </div>
+                    ) : closedShiftReport.varianceCash > 0.01 ? (
+                      <div className="p-3 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-center">
+                        <span className="text-[11px] text-cyan-300 block font-semibold">نتيجة المطابقة: يوجد زيادة في الكاش</span>
+                        <span className="text-xl font-bold font-mono text-cyan-400 mt-0.5 block">
+                          زيادة: +{closedShiftReport.varianceCash.toFixed(2)} جنيه
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-center">
+                        <span className="text-xs text-emerald-300 font-bold block">
+                          نتيجة المطابقة: الحساب مضبوط بدون أي عجز (0.00 ج)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* InstaPay Balance Breakdown */}
+                <div className="p-3.5 bg-slate-900/90 border border-purple-500/30 rounded-xl space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">إنستا باي المتوقع (فواتير السيستم):</span>
+                    <span className="font-mono font-bold text-purple-400 text-sm">
+                      {(closedShiftReport.expectedInstaPay || 0).toFixed(2)} ج
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">إنستا باي الفعلي المسجل ع التليفون:</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {(closedShiftReport.closedInstaPay || 0).toFixed(2)} ج
+                    </span>
+                  </div>
+
+                  {/* InstaPay Variance Banner */}
+                  <div className="pt-2 border-t border-white/10">
+                    {(closedShiftReport.varianceInstaPay || 0) < -0.01 ? (
+                      <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-center">
+                        <span className="text-[11px] text-rose-300 block font-semibold">نتيجة مطابقة إنستا باي: يوجد عجز في التحويلات</span>
+                        <span className="text-xl font-bold font-mono text-rose-400 mt-0.5 block">
+                          عجز إنستا: {Math.abs(closedShiftReport.varianceInstaPay).toFixed(2)}- جنيه
+                        </span>
+                        <span className="text-[10px] text-rose-300/80 mt-1 block">المبلغ الفعلي على التليفون أقل من فواتير إنستا باي بالسيستم</span>
+                      </div>
+                    ) : (closedShiftReport.varianceInstaPay || 0) > 0.01 ? (
+                      <div className="p-3 rounded-xl bg-purple-500/20 border border-purple-500/40 text-center">
+                        <span className="text-[11px] text-purple-300 block font-semibold">نتيجة مطابقة إنستا باي: يوجد زيادة في التحويلات</span>
+                        <span className="text-xl font-bold font-mono text-purple-400 mt-0.5 block">
+                          زيادة إنستا: +{(closedShiftReport.varianceInstaPay || 0).toFixed(2)} جنيه
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-center">
+                        <span className="text-xs text-emerald-300 font-bold block">
+                          نتيجة المطابقة: إنستا باي مطابق للفواتير (0.00 ج)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowShiftReportModal(false);
+                    setShowOpenShift(true);
+                  }}
+                  className="py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold text-xs shadow-lg transition-all cursor-pointer"
+                >
+                  افتح شفت جديد
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowShiftReportModal(false)}
+                  className="py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-white font-semibold text-xs transition-all cursor-pointer"
+                >
+                  إغلاق التقرير
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SCALE DIAGNOSTICS & SETTINGS MODAL */}
+        {showScaleModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={() => setShowScaleModal(false)}>
+            <div className="w-full max-w-lg glass-panel rounded-2xl p-5 sm:p-6 max-h-[92vh] overflow-y-auto relative text-right" dir="rtl" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => setShowScaleModal(false)} className="absolute top-4 left-4 text-gray-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                  <Scale className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">إعدادات وتشخيص الميزان الإلكتروني (RS232)</h3>
+                  <p className="text-xs text-gray-400">ربط وقراءة ميزان الخضار والفاكهة مباشرة عبر منفذ السيريال (COM Port)</p>
+                </div>
+              </div>
+
+              {/* Large Digital Scale Readout Display */}
+              <div className="p-4 rounded-2xl bg-slate-950 border-2 border-emerald-500/30 mb-4 text-center shadow-inner relative overflow-hidden">
+                <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1 px-1">
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <span className={`w-2 h-2 rounded-full ${scale.isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`}></span>
+                    <span>{scale.isConnected ? 'متصل وجاهز للقراءة' : 'الميزان غير متصل'}</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {scale.isConnected && (
+                      <>
+                        <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                          scale.isStable ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {scale.isStable ? 'مستقر (STABLE)' : 'متحرك (UNSTABLE)'}
+                        </span>
+                        {scale.isZero && (
+                          <span className="px-1.5 py-0.5 rounded-md font-bold text-[10px] bg-cyan-500/20 text-cyan-300">
+                            صفر (ZERO)
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Big Digital Number */}
+                <div className="py-2">
+                  <span className="text-5xl sm:text-6xl font-black font-mono tracking-wider text-emerald-400 drop-shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                    {scale.currentWeight.toFixed(3)}
+                  </span>
+                  <span className="text-sm font-bold text-emerald-300/80 mr-2 font-mono">كجم (KG)</span>
+                </div>
+
+                {/* Scale Action Buttons (Tare / Zero) */}
+                {scale.isConnected && (
+                  <div className="flex items-center justify-center gap-2 pt-2 border-t border-white/10 mt-2">
+                    <button
+                      type="button"
+                      onClick={scale.tare}
+                      className="px-3 py-1 bg-white/10 hover:bg-white/20 text-gray-200 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                      title="تصفير الوزن الصافي (Tare)"
+                    >
+                      تصفير الصافي (Tare)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={scale.zero}
+                      className="px-3 py-1 bg-white/10 hover:bg-white/20 text-gray-200 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                      title="إلغاء التصفير والعودة للوزن الإجمالي"
+                    >
+                      إعادة ضبط (Reset)
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Connection Controls & Baud Rate */}
+              <div className="bg-slate-900/80 border border-white/10 rounded-xl p-3.5 mb-4 space-y-3 text-xs">
+                <div className="grid grid-cols-2 gap-3 items-center">
+                  <div>
+                    <label className="block text-gray-300 font-bold mb-1">سرعة النقل (Baud Rate):</label>
+                    <select
+                      value={scale.baudRate}
+                      onChange={(e) => scale.setBaudRate(parseInt(e.target.value, 10))}
+                      className="w-full bg-slate-950 border border-white/15 rounded-lg py-1.5 px-2 text-white font-mono focus:border-emerald-500"
+                    >
+                      <option value={9600}>9600 (الافتراضي - معظم موازين مصر)</option>
+                      <option value={4800}>4800 (موازين CAS و Yaohua)</option>
+                      <option value={2400}>2400 (موازين قديمة)</option>
+                      <option value={19200}>19200</option>
+                      <option value={115200}>115200</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-300 font-bold mb-1">التحكم في الاتصال:</label>
+                    {scale.isConnected ? (
+                      <button
+                        type="button"
+                        onClick={scale.disconnectScale}
+                        className="w-full py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        قطع الاتصال بالمنفذ
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={scale.connectScale}
+                        className="w-full py-2 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-lg shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Scale className="w-3.5 h-3.5" />
+                        <span>ربط واختيار المنفذ (COM)</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {scale.error && (
+                  <div className="p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[11px] font-semibold">
+                    {scale.error}
+                  </div>
+                )}
+              </div>
+
+              {/* Raw Serial Terminal Monitor */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-1.5 text-xs text-gray-400">
+                  <span className="font-bold text-gray-300">شاشة مراقبة البيانات الحية (Serial Terminal):</span>
+                  <span className="text-[10px] text-gray-500 font-mono">مراقبة البايتات الواردة لحظياً</span>
+                </div>
+                <div className="h-28 bg-slate-950 border border-white/10 rounded-xl p-2.5 font-mono text-[11px] text-emerald-400/90 overflow-y-auto space-y-0.5 text-left" dir="ltr">
+                  {scale.rawTerminalLines.length > 0 ? (
+                    scale.rawTerminalLines.map((line, idx) => (
+                      <div key={idx} className="truncate">
+                        <span className="text-gray-600 mr-2">&gt;</span>
+                        {line}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-gray-600 text-center py-8">
+                      {scale.isConnected 
+                        ? 'في انتظار وصول بايتات من الميزان... (تأكد أن الميزان في وضع Continuous Send)'
+                        : 'الميزان غير متصل. اضغط على زر "ربط واختيار المنفذ" لبدء القراءة.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Troubleshooting Accordion / Offline Technician Guide */}
+              <div className="mb-4 bg-slate-900/70 border border-white/10 rounded-xl overflow-hidden shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setShowScaleHelp(!showScaleHelp)}
+                  className="w-full px-3.5 py-2.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 flex items-center justify-between text-xs font-bold transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <HelpCircle className="w-4 h-4 text-amber-400" />
+                    <span>دليل الطوارئ وإرشادات الفني (لو الميزان مقراش أو احتجت مساعدة)</span>
+                  </div>
+                  {showScaleHelp ? <ChevronUp className="w-4 h-4 text-amber-400" /> : <ChevronDown className="w-4 h-4 text-amber-400" />}
+                </button>
+                {showScaleHelp && (
+                  <div className="p-3.5 space-y-3 text-[11px] text-gray-300 border-t border-white/10 bg-slate-950/90 leading-relaxed">
+                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-200">
+                      <strong className="block text-amber-300 mb-1 font-bold">الكلام اللي تقوله لفني الميزان لضبطه بالحرف:</strong>
+                      &ldquo;اضبط الميزان يبعت الداتا Continuous Stream (بث مستمر أوتوماتيك) على سرعة Baud Rate 9600، وتوصيلة كابل RS232 تكون: Pin 2 (RX) و Pin 3 (TX) و Pin 5 (GND)&rdquo;
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="font-bold text-white block mb-0.5">1. لو ضغطت &ldquo;ربط واختيار المنفذ&rdquo; ومظهرش أي COM:</span>
+                        <p className="text-gray-400">
+                          كابل التحويلة (USB to RS232) محتاج تعريفه (Driver) على ويندوز. افتح هوت سبوت من الموبايل 30 ثانية بس عشان ويندوز ينزل تعريفه تلقائياً، أو اسأل الفني عن أسطوانة/ملف تعريف الكابل (CH340 أو Prolific PL2303).
+                        </p>
                       </div>
 
-                      <div className="flex justify-between pt-2">
-                        <button
-                          type="button"
-                          onClick={addRecipeRow}
-                          className="px-2 py-1 border border-dashed border-white/10 text-cyan-400 hover:bg-cyan-500/5 rounded-lg text-[10px] font-semibold"
-                        >
-                          + إضافة مادة خام للوصفة
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={submitInventoryLoading}
-                          className="px-4 py-1.5 bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold rounded-lg text-[10px]"
-                        >
-                          {submitInventoryLoading ? 'جاري الحفظ...' : 'تثبيت الوصفة'}
-                        </button>
+                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="font-bold text-white block mb-0.5">2. لو اتصل والمنفذ ظهر بس الوزن 0 والشاشة السودة فاضية:</span>
+                        <p className="text-gray-400">
+                          الميزان مش باعت أوتوماتيك (مضبوط Manual أو مستني زرار Print). اطلب من الفني تفعيل الـ Continuous Send / Stream Mode من إعدادات الميزان.
+                        </p>
                       </div>
-                    </form>
-                  </div>
-                ) : (
-                  // --- CASHIER RECIPE LIST ---
-                  <div className="grid grid-cols-1 gap-4 max-h-[300px] overflow-y-auto">
-                    <div className="border border-white/5 rounded-xl p-3 bg-slate-900/20 text-right" dir="rtl">
-                      <h4 className="font-bold text-white text-[11px] pb-1 border-b border-white/5 mb-2">وصفات المنيو</h4>
-                      <div className="space-y-2">
-                        {recipesItems.map((item) => (
-                          <div key={item.id} className="flex justify-between items-center text-[10px] border-b border-white/5 pb-2 flex-row-reverse text-right">
-                            <span className="text-white font-semibold">{item.name}</span>
-                            <div className="flex gap-1.5">
-                              <button
-                                onClick={() => handlePOSUpdateItemPrice(item)}
-                                className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded hover:bg-emerald-500/20 text-right font-sans"
-                              >
-                                EGP {item.price.toFixed(2)}
-                              </button>
-                              <button
-                                onClick={() => startEditRecipe({ type: 'item', id: item.id, name: item.name, recipe: item.recipe })}
-                                className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 text-right font-sans"
-                              >
-                                تعديل
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+
+                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="font-bold text-white block mb-0.5">3. لو الشاشة السودة بتجيب رموز غريبة أو شخابيط:</span>
+                        <p className="text-gray-400">
+                          سرعة النقل غير متطابقة. غير خيار &ldquo;سرعة النقل (Baud Rate)&rdquo; من القائمة بالأعلى من 9600 إلى 4800 (مشهور في موازين CAS و Yaohua) أو 2400 وستنتظم القراءة فوراً دون إعادة تحميل الصفحة.
+                        </p>
+                      </div>
+
+                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="font-bold text-white block mb-0.5">4. لو رسالة &ldquo;Port is already open&rdquo; أو تعذر الفتح:</span>
+                        <p className="text-gray-400">
+                          افصل كابل الـ USB وركبه في مدخل USB آخر، وتأكد من إغلاق أي نافذة متصفح ثانية أو برنامج موازين شغال على اللاب.
+                        </p>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* Mobile Bottom Navigation Bar (Visible only on mobile/tablet screens < lg) */}
-      <div className="lg:hidden shrink-0 h-14 bg-[#0c1424] border-t border-white/5 grid grid-cols-2 text-center no-print">
-        <button
-          onClick={() => setMobileTab('menu')}
-          className={`flex flex-col items-center justify-center gap-1 text-xs transition-all ${
-            mobileTab === 'menu' ? 'text-cyan-400 font-bold bg-cyan-500/5' : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>الصالات والمنيو</span>
-        </button>
-        <button
-          onClick={() => setMobileTab('cart')}
-          className={`flex flex-col items-center justify-center gap-1 text-xs relative transition-all ${
-            mobileTab === 'cart' ? 'text-cyan-400 font-bold bg-cyan-500/5' : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <ShoppingBag className="w-4 h-4" />
-          <span>الفاتورة الحالية</span>
-          {cart && cart.items.length > 0 && (
-            <span className="absolute top-2 right-1/2 translate-x-5 px-1.5 py-0.5 rounded-full bg-cyan-500 text-white text-[9px] font-bold">
-              {cart.items.reduce((acc, i) => acc + i.qty, 0)}
-            </span>
-          )}
-        </button>
+              {/* Simulator & Hardware Help */}
+              <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] text-gray-400">تجربة سريعة بدون كابل:</span>
+                  {[0.5, 1.25, 2.5, 0].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => scale.simulateWeight(val)}
+                      className="px-2 py-0.5 rounded bg-white/5 hover:bg-emerald-500/20 text-gray-300 hover:text-emerald-300 text-[10px] font-mono border border-white/5 transition-all cursor-pointer"
+                    >
+                      {val === 0 ? 'تصفير' : `${val} كجم`}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowScaleModal(false)}
+                  className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold transition-all cursor-pointer text-xs"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Alert Banner */}
+        {alertMsg && (
+          <div dir="rtl" className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-2rem)] max-w-xl p-4 rounded-xl shadow-2xl border text-sm flex items-start gap-3 transition-all no-print flex-row-reverse ${
+            alertMsg.type === 'success' ? 'bg-emerald-950 border-emerald-400/40 text-emerald-100' : 'bg-rose-950 border-rose-400/40 text-rose-100'
+          }`}>
+            {alertMsg.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
+            <span className="whitespace-pre-line font-semibold leading-relaxed text-right flex-1">{alertMsg.text}</span>
+          </div>
+        )}
       </div>
 
-    </div>
-
-      {/* ======================================================== */}
-      {/* 4. Thermal receipt print-only view (Active when printing) */}
-      {/* ======================================================== */}
+      {/* Thermal receipt print-only view: Clean Customer Sales Receipt (No KOT) */}
       {receiptOrder && (
         <div className="hidden print:block print-area font-mono text-black bg-white" dir="rtl">
-          {/* 1. Full Customer Invoice */}
           <ReceiptLayout />
-
-          {/* 2. Physical Thermal Printer Auto-Cut Page Break */}
-          <div className="kot-page-break"></div>
-
-          {/* 3. Short Barista KOT Slip */}
-          <BaristaKotLayout />
         </div>
       )}
     </>

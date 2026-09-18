@@ -45,7 +45,17 @@ export async function GET() {
       );
     }
 
-    // 4. Get count of today's orders to sync receipt numbering counter
+    // 4. Get customers and fixed discount reasons
+    const [customers, discountReasons] = await Promise.all([
+      prisma.customer.findMany({
+        orderBy: { name: 'asc' },
+      }),
+      prisma.discountReason.findMany({
+        orderBy: { reason: 'asc' },
+      }),
+    ]);
+
+    // 5. Get count of today's orders to sync receipt numbering counter
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayOrdersCount = await prisma.salesOrder.count({
@@ -56,6 +66,8 @@ export async function GET() {
       categories,
       modifiers,
       halls,
+      customers,
+      discountReasons,
       todayOrdersCount,
     });
   } catch (error: any) {
@@ -63,3 +75,4 @@ export async function GET() {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+

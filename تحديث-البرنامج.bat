@@ -1,9 +1,9 @@
 @echo off
-title Day ^& Night POS - Update Application
+title BANANA FOOD POS - Update Application
 cd /d "%~dp0"
 
 echo ====================================================
-echo      Day ^& Night POS - Updating from GitHub
+echo      BANANA FOOD POS - Updating from GitHub
 echo ====================================================
 echo.
 

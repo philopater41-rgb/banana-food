@@ -1,13 +1,19 @@
 {
-  "name": "Day & Night POS",
-  "short_name": "DN-POS",
-  "description": "Offline-First POS & Inventory ERP for Day & Night Cafe",
+  "name": "BANANA FOOD POS",
+  "short_name": "BANANA-POS",
+  "description": "نظام الكاشير وإدارة المبيعات والمخزن لمحل بانانا فود للخضار والفاكهة",
   "start_url": "/pos",
   "display": "standalone",
   "background_color": "#090d16",
-  "theme_color": "#06b6d4",
+  "theme_color": "#10b981",
   "orientation": "any",
   "icons": [
+    {
+      "src": "/banana-logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
     {
       "src": "/icon.png",
       "sizes": "192x192",

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
-import { offlineDB, type LocalSalesOrder } from '@/lib/dexie';
+import { offlineDB } from '@/lib/dexie';
 
 export function useOfflineSync() {
   const { isOnline, setIsOnline } = useAppStore();
@@ -65,14 +65,21 @@ export function useOfflineSync() {
         receiptNumber: order.receiptNumber,
         shiftId: order.shiftId,
         tableId: order.tableId,
+        customerId: order.customerId || null,
+        customerName: order.customerName || null,
         orderType: order.orderType,
         paymentMethod: order.paymentMethod,
+        cashOutAmount: order.cashOutAmount || 0,
+        cashOutFee: order.cashOutFee || 0,
         status: order.status,
         subtotal: order.subtotal,
         discount: order.discount,
         discountReason: order.discountReason,
         tax: order.tax,
         total: order.total,
+        returnStatus: order.returnStatus || 'NONE',
+        returnedAmount: order.returnedAmount || 0,
+        returnReason: order.returnReason || null,
         createdAt: order.createdAt,
         items: order.items,
       }));

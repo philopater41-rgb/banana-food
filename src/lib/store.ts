@@ -15,6 +15,8 @@ export interface ShiftState {
   expectedCash: number;
   expectedInstaPay: number;
   expectedVisa: number;
+  expectedVodafoneCash?: number;
+  expectedCashOut?: number;
   openedAt: string;
 }
 
@@ -34,7 +36,20 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  user: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('dn_user') || 'null') : null,
+  user: typeof window !== 'undefined' ? (() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('dn_user') || 'null');
+      if (u && typeof u.name === 'string') {
+        if (/bon/i.test(u.name) || /مون/.test(u.name)) {
+          u.name = u.role === 'ADMIN' ? 'إدارة BANANA FOOD' : 'كاشير بانانا فود';
+          localStorage.setItem('dn_user', JSON.stringify(u));
+        }
+      }
+      return u;
+    } catch {
+      return null;
+    }
+  })() : null,
   activeShift: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('dn_shift') || 'null') : null,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   activeHallId: null,
@@ -42,6 +57,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
   setUser: (user) => {
     if (user) {
+      if (user.name && (/bon/i.test(user.name) || /مون/.test(user.name))) {
+        user.name = user.role === 'ADMIN' ? 'إدارة BANANA FOOD' : 'كاشير بانانا فود';
+      }
       localStorage.setItem('dn_user', JSON.stringify(user));
     } else {
       localStorage.removeItem('dn_user');
