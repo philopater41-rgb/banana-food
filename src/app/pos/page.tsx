@@ -21,8 +21,7 @@ import {
   Trash2, Plus, Minus, DollarSign, RefreshCw, 
   CheckCircle2, AlertCircle, AlertTriangle, X, Printer, Lock,
   RotateCcw, Search, Tag, Check, Sparkles,
-  Scale, Edit3, Calculator, TrendingUp, Store,
-  HelpCircle, ChevronDown, ChevronUp
+  Scale, Edit3, Calculator, TrendingUp, Store
 } from 'lucide-react';
 
 // Native browser UUID
@@ -72,7 +71,6 @@ export default function POSPage() {
   const { pendingCount, syncing, triggerSync } = useOfflineSync();
   const scale = useScale();
   const [showScaleModal, setShowScaleModal] = useState(false);
-  const [showScaleHelp, setShowScaleHelp] = useState(false);
 
   const cleanUserName = user?.name || 'كاشير بانانا فود';
 
@@ -2814,58 +2812,7 @@ export default function POSPage() {
                 </div>
               </div>
 
-              {/* Troubleshooting Accordion / Offline Technician Guide */}
-              <div className="mb-4 bg-slate-900/70 border border-white/10 rounded-xl overflow-hidden shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => setShowScaleHelp(!showScaleHelp)}
-                  className="w-full px-3.5 py-2.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 flex items-center justify-between text-xs font-bold transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <HelpCircle className="w-4 h-4 text-amber-400" />
-                    <span>دليل الطوارئ وإرشادات الفني (لو الميزان مقراش أو احتجت مساعدة)</span>
-                  </div>
-                  {showScaleHelp ? <ChevronUp className="w-4 h-4 text-amber-400" /> : <ChevronDown className="w-4 h-4 text-amber-400" />}
-                </button>
-                {showScaleHelp && (
-                  <div className="p-3.5 space-y-3 text-[11px] text-gray-300 border-t border-white/10 bg-slate-950/90 leading-relaxed">
-                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-200">
-                      <strong className="block text-amber-300 mb-1 font-bold">الكلام اللي تقوله لفني الميزان لضبطه بالحرف:</strong>
-                      &ldquo;اضبط الميزان يبعت الداتا Continuous Stream (بث مستمر أوتوماتيك) على سرعة Baud Rate 9600، وتوصيلة كابل RS232 تكون: Pin 2 (RX) و Pin 3 (TX) و Pin 5 (GND)&rdquo;
-                    </div>
 
-                    <div className="space-y-2">
-                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
-                        <span className="font-bold text-white block mb-0.5">1. لو ضغطت &ldquo;ربط واختيار المنفذ&rdquo; ومظهرش أي COM:</span>
-                        <p className="text-gray-400">
-                          كابل التحويلة (USB to RS232) محتاج تعريفه (Driver) على ويندوز. افتح هوت سبوت من الموبايل 30 ثانية بس عشان ويندوز ينزل تعريفه تلقائياً، أو اسأل الفني عن أسطوانة/ملف تعريف الكابل (CH340 أو Prolific PL2303).
-                        </p>
-                      </div>
-
-                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
-                        <span className="font-bold text-white block mb-0.5">2. لو اتصل والمنفذ ظهر بس الوزن 0 والشاشة السودة فاضية:</span>
-                        <p className="text-gray-400">
-                          الميزان مش باعت أوتوماتيك (مضبوط Manual أو مستني زرار Print). اطلب من الفني تفعيل الـ Continuous Send / Stream Mode من إعدادات الميزان.
-                        </p>
-                      </div>
-
-                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
-                        <span className="font-bold text-white block mb-0.5">3. لو الشاشة السودة بتجيب رموز غريبة أو شخابيط:</span>
-                        <p className="text-gray-400">
-                          سرعة النقل غير متطابقة. غير خيار &ldquo;سرعة النقل (Baud Rate)&rdquo; من القائمة بالأعلى من 9600 إلى 4800 (مشهور في موازين CAS و Yaohua) أو 2400 وستنتظم القراءة فوراً دون إعادة تحميل الصفحة.
-                        </p>
-                      </div>
-
-                      <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
-                        <span className="font-bold text-white block mb-0.5">4. لو رسالة &ldquo;Port is already open&rdquo; أو تعذر الفتح:</span>
-                        <p className="text-gray-400">
-                          افصل كابل الـ USB وركبه في مدخل USB آخر، وتأكد من إغلاق أي نافذة متصفح ثانية أو برنامج موازين شغال على اللاب.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* Simulator & Hardware Help */}
               <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs">
