@@ -74,9 +74,7 @@ export default function POSPage() {
   const [showScaleModal, setShowScaleModal] = useState(false);
   const [showScaleHelp, setShowScaleHelp] = useState(false);
 
-  const cleanUserName = (user?.name && !/bon/i.test(user.name) && !/مون/.test(user.name))
-    ? user.name
-    : 'كاشير بانانا فود';
+  const cleanUserName = user?.name || 'كاشير بانانا فود';
 
   // Local state for POS data loaded from Dexie / API
   const [categories, setCategories] = useState<LocalCategory[]>([]);
@@ -235,28 +233,15 @@ export default function POSPage() {
     loadCart();
   }, [loadCart]);
 
-  // Clean up any stale user data in browser localStorage
+  // Clean up any legacy localStorage keys
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        const rawUser = localStorage.getItem('dn_user');
-        if (rawUser && (/bon/i.test(rawUser) || /مون/.test(rawUser))) {
-          const parsed = JSON.parse(rawUser);
-          parsed.name = parsed.role === 'ADMIN' ? 'إدارة BANANA FOOD' : 'كاشير بانانا فود';
-          localStorage.setItem('dn_user', JSON.stringify(parsed));
-          if (setUser) setUser(parsed);
-        }
-        const rawShift = localStorage.getItem('dn_shift');
-        if (rawShift && (/bon/i.test(rawShift) || /مون/.test(rawShift))) {
-          const parsedShift = JSON.parse(rawShift);
-          if (parsedShift.cashierName && (/bon/i.test(parsedShift.cashierName) || /مون/.test(parsedShift.cashierName))) {
-            parsedShift.cashierName = 'كاشير بانانا فود';
-            localStorage.setItem('dn_shift', JSON.stringify(parsedShift));
-          }
-        }
+        localStorage.removeItem('dn_user');
+        localStorage.removeItem('dn_shift');
       } catch (e) {}
     }
-  }, [setUser]);
+  }, []);
 
   // Load POS initialization data (Categories, Items, Modifiers)
   const loadPOSData = useCallback(async () => {

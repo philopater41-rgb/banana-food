@@ -25,5 +25,5 @@ echo   Update completed successfully! Starting POS...
 echo ====================================================
 echo.
 
-call start-pos.bat
+call Start_Banana_Food.bat
 exit

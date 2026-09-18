@@ -15,250 +15,155 @@ function hashPassword(password) {
 }
 
 async function main() {
-  console.log('Starting seeding...');
+  console.log('Seeding BANANA FOOD POS database...');
 
-  // 1. Clean old data (in reverse dependency order)
-  await prisma.userLog.deleteMany({});
-  await prisma.wastageLog.deleteMany({});
-  await prisma.salesOrderItemModifier.deleteMany({});
-  await prisma.salesOrderItem.deleteMany({});
-  await prisma.salesOrder.deleteMany({});
-  await prisma.cashTransaction.deleteMany({});
-  await prisma.shift.deleteMany({});
-  await prisma.table.deleteMany({});
-  await prisma.hall.deleteMany({});
-  await prisma.recipeModifier.deleteMany({});
-  await prisma.recipe.deleteMany({});
-  await prisma.rawMaterial.deleteMany({});
-  await prisma.modifier.deleteMany({});
-  await prisma.item.deleteMany({});
-  await prisma.category.deleteMany({});
-  await prisma.user.deleteMany({});
+  // 1. Seed Users
+  const users = [
+    { username: 'admin', password: hashPassword('admin123'), name: 'إدارة BANANA FOOD', role: 'ADMIN' },
+    { username: 'cashier', password: hashPassword('cashier'), name: 'كاشير بانانا فود', role: 'CASHIER' },
+    { username: 'hossam', password: hashPassword('hossam'), name: 'حسام', role: 'ADMIN' },
+    { username: 'ragheb', password: hashPassword('ragheb'), name: 'راغب', role: 'ADMIN' },
+  ];
 
-  // 2. Create Users
-  const adminPassword = hashPassword('admin123');
-  const cashierPassword = hashPassword('cashier123');
+  for (const u of users) {
+    await prisma.user.upsert({
+      where: { username: u.username },
+      update: { password: u.password, name: u.name, role: u.role, isActive: true },
+      create: { username: u.username, password: u.password, name: u.name, role: u.role, isActive: true },
+    });
+  }
+  console.log('Seeded users (admin, cashier, hossam, ragheb).');
 
-  const admin = await prisma.user.create({
-    data: {
-      username: 'admin',
-      password: adminPassword,
-      name: 'إدارة BANANA FOOD',
-      role: 'ADMIN',
-    },
-  });
+  // 2. Seed Categories
+  const categoriesData = ['خضار', 'فاكهة', 'خضرة'];
+  const categoryMap = {};
+  for (const catName of categoriesData) {
+    const cat = await prisma.category.upsert({
+      where: { name: catName },
+      update: { isActive: true },
+      create: { name: catName, isActive: true },
+    });
+    categoryMap[catName] = cat.id;
+  }
+  console.log('Seeded categories:', Object.keys(categoryMap));
 
-  const cashier = await prisma.user.create({
-    data: {
-      username: 'cashier',
-      password: cashierPassword,
-      name: 'Sherif Cashier',
-      role: 'CASHIER',
-    },
-  });
+  // 3. Seed Items
+  const items = [
+    // Vegetables
+    { name: 'طماطم', price: 25, cost: 18, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'خيار', price: 18, cost: 14, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'بطاطس', price: 20, cost: 16, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'بصل أحمر', price: 22, cost: 17.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'بصل أبيض', price: 18, cost: 14, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'ليمون', price: 30, cost: 24, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'فلفل رومي', price: 20, cost: 15.5, stockQty: 50, minStockLevel: 12, unit: 'كجم', cat: 'خضار' },
+    { name: 'فلفل ألوان', price: 45, cost: 35, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'فلفل حار', price: 25, cost: 19, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'كوسة', price: 22, cost: 17, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'باذنجان رومي', price: 15, cost: 11, stockQty: 50, minStockLevel: 12, unit: 'كجم', cat: 'خضار' },
+    { name: 'باذنجان عروس', price: 18, cost: 13.5, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'باذنجان أبيض', price: 18, cost: 13.5, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'جزر', price: 15, cost: 11, stockQty: 50, minStockLevel: 12, unit: 'كجم', cat: 'خضار' },
+    { name: 'ملوخية طازة', price: 20, cost: 14, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'بامية', price: 40, cost: 31, stockQty: 50, minStockLevel: 8, unit: 'كجم', cat: 'خضار' },
+    { name: 'فاصوليا خضراء', price: 35, cost: 27, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'بسلة', price: 35, cost: 26.5, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'قلقاس', price: 30, cost: 23, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'سبانخ', price: 20, cost: 14.5, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'ثوم بلدي', price: 60, cost: 48, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'ثوم صيني', price: 80, cost: 65, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'خضار' },
+    { name: 'زنجبيل فريش', price: 120, cost: 95, stockQty: 50, minStockLevel: 5, unit: 'كجم', cat: 'خضار' },
+    { name: 'بطاطا حلوة', price: 15, cost: 10.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'خضار' },
+    { name: 'قرنبيط', price: 25, cost: 18, stockQty: 50, minStockLevel: 10, unit: 'قطعة', cat: 'خضار' },
+    { name: 'كرنب محشي', price: 30, cost: 22, stockQty: 50, minStockLevel: 10, unit: 'قطعة', cat: 'خضار' },
+    { name: 'كرنب أحمر (سلطة)', price: 25, cost: 18, stockQty: 50, minStockLevel: 8, unit: 'قطعة', cat: 'خضار' },
+    { name: 'كرنب أبيض (كول سلو)', price: 25, cost: 18, stockQty: 50, minStockLevel: 8, unit: 'قطعة', cat: 'خضار' },
+    { name: 'كابوتشا', price: 20, cost: 14, stockQty: 50, minStockLevel: 10, unit: 'قطعة', cat: 'خضار' },
+    { name: 'بروكلي', price: 45, cost: 34, stockQty: 50, minStockLevel: 8, unit: 'كجم', cat: 'خضار' },
+    { name: 'مشروم فريش طبق', price: 40, cost: 30, stockQty: 50, minStockLevel: 10, unit: 'طبق', cat: 'خضار' },
 
-  console.log('Seeded users.');
+    // Fruits
+    { name: 'موز بلدي فاخر', price: 25, cost: 19, stockQty: 50, minStockLevel: 20, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'موز مستورد', price: 40, cost: 31, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'تفاح أحمر سكري', price: 65, cost: 50, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'تفاح أصفر لبناني', price: 60, cost: 46, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'تفاح أخضر دايت', price: 85, cost: 68, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'برتقال بلدي عصير', price: 15, cost: 11, stockQty: 50, minStockLevel: 20, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'برتقال بسرة', price: 20, cost: 15, stockQty: 50, minStockLevel: 20, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'يوسفي بلدي', price: 18, cost: 13.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'يوسفي كلمنتينا', price: 22, cost: 16.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'فراولة فريش', price: 35, cost: 26, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'جوافة بناتي', price: 30, cost: 22.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'رمان سكري', price: 25, cost: 18.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'مانجو عويس', price: 80, cost: 62, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'مانجو كيت', price: 50, cost: 38, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'مانجو زبدية عصير', price: 40, cost: 30, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'عنب بناتي أحمر', price: 45, cost: 34, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'عنب بناتي أصفر', price: 40, cost: 30, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'خوخ سكري', price: 35, cost: 26, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'مشمش صحراوي', price: 45, cost: 34, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'برقوق أحمر', price: 50, cost: 38, stockQty: 50, minStockLevel: 10, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'بطيخ جيزة فاخر', price: 15, cost: 10, stockQty: 50, minStockLevel: 20, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'كنتالوب سكري', price: 20, cost: 14.5, stockQty: 50, minStockLevel: 15, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'أناناس', price: 85, cost: 65, stockQty: 50, minStockLevel: 5, unit: 'قطعة', cat: 'فاكهة' },
+    { name: 'كيوي مستورد', price: 110, cost: 88, stockQty: 50, minStockLevel: 8, unit: 'كجم', cat: 'فاكهة' },
+    { name: 'أفوكادو هاس', price: 140, cost: 110, stockQty: 50, minStockLevel: 5, unit: 'كجم', cat: 'فاكهة' },
 
-  // 3. Create Halls & Tables
-  const mainHall = await prisma.hall.create({
-    data: { name: 'Main Hall' },
-  });
+    // Greens / Herbs
+    { name: 'شبت بلدي', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 20, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'بقدونس بلدي', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 20, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'كزبرة خضراء', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 20, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'جرجير بلدي طازة', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 20, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'فجل أحمر وأبيض', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 20, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'نعناع بلدي فريش', price: 7, cost: 3.5, stockQty: 50, minStockLevel: 15, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'كرات مصري', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 15, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'سلق قلقاس', price: 5, cost: 2.5, stockQty: 50, minStockLevel: 15, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'بصل أخضر بلدي', price: 7, cost: 3.5, stockQty: 50, minStockLevel: 15, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'روزماري فريش', price: 15, cost: 8, stockQty: 50, minStockLevel: 5, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'زعتر أخضر فريش', price: 15, cost: 8, stockQty: 50, minStockLevel: 5, unit: 'حزمة', cat: 'خضرة' },
+    { name: 'ريحان إيطالي', price: 12, cost: 6, stockQty: 50, minStockLevel: 5, unit: 'حزمة', cat: 'خضرة' },
+  ];
 
-  const terrace = await prisma.hall.create({
-    data: { name: 'Terrace (Outdoor)' },
-  });
+  for (const it of items) {
+    const catId = categoryMap[it.cat];
+    if (!catId) continue;
+    const existing = await prisma.item.findFirst({
+      where: { name: it.name, categoryId: catId },
+    });
+    if (existing) {
+      await prisma.item.update({
+        where: { id: existing.id },
+        data: {
+          price: it.price,
+          cost: it.cost,
+          stockQty: it.stockQty,
+          minStockLevel: it.minStockLevel,
+          unit: it.unit,
+          isActive: true,
+        },
+      });
+    } else {
+      await prisma.item.create({
+        data: {
+          name: it.name,
+          price: it.price,
+          cost: it.cost,
+          stockQty: it.stockQty,
+          minStockLevel: it.minStockLevel,
+          unit: it.unit,
+          categoryId: catId,
+          isActive: true,
+        },
+      });
+    }
+  }
 
-  await prisma.table.createMany({
-    data: [
-      { name: 'Table 1', hallId: mainHall.id, status: 'VACANT' },
-      { name: 'Table 2', hallId: mainHall.id, status: 'VACANT' },
-      { name: 'Table 3', hallId: mainHall.id, status: 'VACANT' },
-      { name: 'Table 4', hallId: mainHall.id, status: 'VACANT' },
-      { name: 'Table 11 (Bar)', hallId: mainHall.id, status: 'VACANT' },
-      { name: 'Table T1', hallId: terrace.id, status: 'VACANT' },
-      { name: 'Table T2', hallId: terrace.id, status: 'VACANT' },
-      { name: 'Table T3', hallId: terrace.id, status: 'VACANT' },
-    ],
-  });
-
-  console.log('Seeded halls and tables.');
-
-  // 4. Create Categories & Items
-  const coffeeCat = await prisma.category.create({ data: { name: 'Hot Coffee' } });
-  const coldCat = await prisma.category.create({ data: { name: 'Cold Drinks' } });
-  const bakeryCat = await prisma.category.create({ data: { name: 'Bakery & Sweets' } });
-
-  // Items
-  const espresso = await prisma.item.create({
-    data: { name: 'Espresso', price: 35.0, categoryId: coffeeCat.id },
-  });
-  const latte = await prisma.item.create({
-    data: { name: 'Latte', price: 50.0, categoryId: coffeeCat.id },
-  });
-  const cappucino = await prisma.item.create({
-    data: { name: 'Cappuccino', price: 55.0, categoryId: coffeeCat.id },
-  });
-  const mojito = await prisma.item.create({
-    data: { name: 'Mojito (Mint)', price: 45.0, categoryId: coldCat.id },
-  });
-  const icedSpanish = await prisma.item.create({
-    data: { name: 'Iced Spanish Latte', price: 65.0, categoryId: coldCat.id },
-  });
-  const croissant = await prisma.item.create({
-    data: { name: 'Butter Croissant', price: 40.0, categoryId: bakeryCat.id },
-  });
-  const chocoCroissant = await prisma.item.create({
-    data: { name: 'Chocolate Croissant', price: 48.0, categoryId: bakeryCat.id },
-  });
-
-  console.log('Seeded categories and items.');
-
-  // 5. Create Modifiers
-  const extraShot = await prisma.modifier.create({
-    data: { name: 'Extra Espresso Shot', priceImpact: 15.0 },
-  });
-  const almondMilk = await prisma.modifier.create({
-    data: { name: 'Almond Milk swap', priceImpact: 20.0 },
-  });
-  const extraCaramel = await prisma.modifier.create({
-    data: { name: 'Caramel Syrup', priceImpact: 10.0 },
-  });
-
-  console.log('Seeded modifiers.');
-
-  // 6. Create Raw Materials (Inventory)
-  const coffeeBeans = await prisma.rawMaterial.create({
-    data: {
-      name: 'Espresso Coffee Beans',
-      stockQty: 5000, // 5000g = 5kg
-      minStockLevel: 1000, // 1000g = 1kg alert
-      purchaseUnit: 'kg',
-      deductUnit: 'g',
-      conversionFactor: 1000,
-    },
-  });
-
-  const milk = await prisma.rawMaterial.create({
-    data: {
-      name: 'Full Cream Milk',
-      stockQty: 12000, // 12000ml = 12 Liters
-      minStockLevel: 3000, // 3 Liters alert
-      purchaseUnit: 'liter',
-      deductUnit: 'ml',
-      conversionFactor: 1000,
-    },
-  });
-
-  const almondMilkRaw = await prisma.rawMaterial.create({
-    data: {
-      name: 'Almond Milk Pack',
-      stockQty: 4000, // 4 Liters
-      minStockLevel: 1000,
-      purchaseUnit: 'liter',
-      deductUnit: 'ml',
-      conversionFactor: 1000,
-    },
-  });
-
-  const sugar = await prisma.rawMaterial.create({
-    data: {
-      name: 'White Sugar',
-      stockQty: 10000, // 10kg
-      minStockLevel: 2000,
-      purchaseUnit: 'kg',
-      deductUnit: 'g',
-      conversionFactor: 1000,
-    },
-  });
-
-  const rawCroissant = await prisma.rawMaterial.create({
-    data: {
-      name: 'Frozen Croissant (Raw)',
-      stockQty: 50,
-      minStockLevel: 15,
-      purchaseUnit: 'box (25pcs)',
-      deductUnit: 'unit',
-      conversionFactor: 25,
-    },
-  });
-
-  const chocSyrup = await prisma.rawMaterial.create({
-    data: {
-      name: 'Chocolate Syrup',
-      stockQty: 2000, // 2L
-      minStockLevel: 500,
-      purchaseUnit: 'bottle (1L)',
-      deductUnit: 'ml',
-      conversionFactor: 1000,
-    },
-  });
-
-  console.log('Seeded raw materials.');
-
-  // 7. Create Recipes (BOM)
-  // Espresso: 18g coffee beans
-  await prisma.recipe.create({
-    data: { itemId: espresso.id, rawMaterialId: coffeeBeans.id, quantity: 18 },
-  });
-
-  // Latte: 18g coffee beans + 150ml milk
-  await prisma.recipe.create({
-    data: { itemId: latte.id, rawMaterialId: coffeeBeans.id, quantity: 18 },
-  });
-  await prisma.recipe.create({
-    data: { itemId: latte.id, rawMaterialId: milk.id, quantity: 150 },
-  });
-
-  // Cappuccino: 18g coffee beans + 180ml milk
-  await prisma.recipe.create({
-    data: { itemId: cappucino.id, rawMaterialId: coffeeBeans.id, quantity: 18 },
-  });
-  await prisma.recipe.create({
-    data: { itemId: cappucino.id, rawMaterialId: milk.id, quantity: 180 },
-  });
-
-  // Iced Spanish Latte: 18g coffee beans + 150ml milk + 20g sugar
-  await prisma.recipe.create({
-    data: { itemId: icedSpanish.id, rawMaterialId: coffeeBeans.id, quantity: 18 },
-  });
-  await prisma.recipe.create({
-    data: { itemId: icedSpanish.id, rawMaterialId: milk.id, quantity: 150 },
-  });
-  await prisma.recipe.create({
-    data: { itemId: icedSpanish.id, rawMaterialId: sugar.id, quantity: 20 },
-  });
-
-  // Butter Croissant: 1 unit frozen croissant
-  await prisma.recipe.create({
-    data: { itemId: croissant.id, rawMaterialId: rawCroissant.id, quantity: 1 },
-  });
-
-  // Chocolate Croissant: 1 unit frozen croissant + 15ml chocolate syrup
-  await prisma.recipe.create({
-    data: { itemId: chocoCroissant.id, rawMaterialId: rawCroissant.id, quantity: 1 },
-  });
-  await prisma.recipe.create({
-    data: { itemId: chocoCroissant.id, rawMaterialId: chocSyrup.id, quantity: 15 },
-  });
-
-  // Modifier Recipes
-  // Extra shot: 9g coffee beans
-  await prisma.recipeModifier.create({
-    data: { modifierId: extraShot.id, rawMaterialId: coffeeBeans.id, quantity: 9 },
-  });
-
-  // Almond milk: swaps 150ml normal milk with 150ml almond milk (for simplicity, we just deduct 150ml almond milk)
-  await prisma.recipeModifier.create({
-    data: { modifierId: almondMilk.id, rawMaterialId: almondMilkRaw.id, quantity: 150 },
-  });
-
-  console.log('Seeded recipes.');
-  console.log('Seeding finished successfully!');
+  console.log(`Successfully seeded ${items.length} Banana Food produce items.`);
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error('Seed error:', e);
     process.exit(1);
   })
   .finally(async () => {
