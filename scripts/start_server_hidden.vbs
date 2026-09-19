@@ -5,6 +5,14 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 ScriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 ProjectRoot = fso.GetParentFolderName(ScriptDir)
 
+' Ensure Node.js path is available
+Dim nodeCmd
+If fso.FileExists("C:\Program Files\nodejs\node.exe") Then
+    nodeCmd = """C:\Program Files\nodejs\node.exe"""
+Else
+    nodeCmd = "node"
+End If
+
 ' Change directory to project root and run next start hidden (window style 0, wait on return false)
 WshShell.CurrentDirectory = ProjectRoot
-WshShell.Run "cmd.exe /c node ""node_modules\next\dist\bin\next"" start", 0, False
+WshShell.Run "cmd.exe /c " & nodeCmd & " ""node_modules\next\dist\bin\next"" start", 0, False

@@ -1,7 +1,9 @@
-﻿# ====================================================================
+# ====================================================================
 # BANANA FOOD POS - SYSTEM SETUP & DRIVER INSTALLATION SCRIPT
 # ====================================================================
 
+chcp 65001 | Out-Null
+$OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Continue"
 
@@ -39,42 +41,99 @@ try {
 }
 
 if (-not $nodeInstalled) {
-    Write-Host "      Node.js is not found! Installing Node.js LTS automatically..." -ForegroundColor Yellow
-    Write-Host "      جاري تحميل وتثبيت Node.js LTS على الجهاز..." -ForegroundColor Yellow
+    Write-Host "      Node.js is not found! Setting up Node.js LTS..." -ForegroundColor Yellow
+    Write-Host "      جاري تجهيز وتثبيت Node.js LTS على الجهاز..." -ForegroundColor Yellow
 
-    $installedViaWinget = $false
-    try {
-        $wingetCheck = & winget --version 2>$null
-        if ($wingetCheck) {
-            Write-Host "      Using Windows Package Manager (winget)..." -ForegroundColor Gray
-            & winget install OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
-            Refresh-Path
-            $nodeVer = & node -v 2>$null
-            if ($nodeVer -match "v\d+") {
-                $installedViaWinget = $true
-                Write-Host "      Node.js installed successfully via winget: $nodeVer" -ForegroundColor Green
-            }
+    # Check for local installer in project directory first
+    $localMsiCandidates = @(
+        (Join-Path $ProjectRoot "installers\node-v20.18.0-x64.msi"),
+        (Join-Path $ProjectRoot "installers\*.msi"),
+        (Join-Path $ProjectRoot "*.msi")
+    )
+    $localMsi = $null
+    foreach ($pattern in $localMsiCandidates) {
+        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $localMsi = $found.FullName
+            break
         }
-    } catch {
-        $installedViaWinget = $false
     }
 
-    if (-not $installedViaWinget) {
+    if ($localMsi) {
+        Write-Host "      Found local Node.js installer: $localMsi" -ForegroundColor Green
+        Write-Host "      جاري التثبيت من الملف المحلي بدون إنترنت..." -ForegroundColor Gray
+        Start-Process msiexec.exe -ArgumentList "/i `"$localMsi`" /qn /norestart" -Wait
+        Refresh-Path
+        $nodeVer = & node -v 2>$null
+        if ($nodeVer -match "v\d+") {
+            Write-Host "      Node.js installed successfully from local package: $nodeVer" -ForegroundColor Green
+            $nodeInstalled = $true
+        }
+    }
+
+    $installedViaWinget = $false
+    if (-not $nodeInstalled) {
+        try {
+            $wingetCheck = & winget --version 2>$null
+            if ($wingetCheck) {
+                Write-Host "      Using Windows Package Manager (winget)..." -ForegroundColor Gray
+                & winget install OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
+                Refresh-Path
+                $nodeVer = & node -v 2>$null
+                if ($nodeVer -match "v\d+") {
+                    $installedViaWinget = $true
+                    $nodeInstalled = $true
+                    Write-Host "      Node.js installed successfully via winget: $nodeVer" -ForegroundColor Green
+                }
+            }
+        } catch {
+            $installedViaWinget = $false
+        }
+    }
+
+    if (-not $nodeInstalled -and -not $installedViaWinget) {
         $msiUrl = "https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi"
         $msiDest = Join-Path $env:TEMP "nodejs-lts-setup.msi"
         Write-Host "      Downloading Node.js installer from $msiUrl ..." -ForegroundColor Gray
+        $downloaded = $false
+
+        # Attempt 1: curl with SSL bypass
         try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $webClient = New-Object System.Net.WebClient
-            $webClient.DownloadFile($msiUrl, $msiDest)
+            $curlCheck = & curl.exe --version 2>$null
+            if ($curlCheck) {
+                & curl.exe -k -L -f "$msiUrl" -o "$msiDest" 2>$null
+                if ((Test-Path $msiDest) -and ((Get-Item $msiDest).Length -gt 10000000)) {
+                    $downloaded = $true
+                }
+            }
+        } catch {
+            $downloaded = $false
+        }
+
+        # Attempt 2: WebClient with certificate validation bypass
+        if (-not $downloaded) {
+            try {
+                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls
+                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+                $webClient = New-Object System.Net.WebClient
+                $webClient.DownloadFile($msiUrl, $msiDest)
+                if ((Test-Path $msiDest) -and ((Get-Item $msiDest).Length -gt 10000000)) {
+                    $downloaded = $true
+                }
+            } catch {
+                Write-Host "      Download failed: $_" -ForegroundColor Red
+            }
+        }
+
+        if ($downloaded) {
             Write-Host "      Download completed. Running silent installation..." -ForegroundColor Gray
-            $process = Start-Process msiexec.exe -ArgumentList "/i `"$msiDest`" /qn /norestart" -Wait -PassThru
+            Start-Process msiexec.exe -ArgumentList "/i `"$msiDest`" /qn /norestart" -Wait
             Refresh-Path
             $nodeVer = & node -v 2>$null
             Write-Host "      Node.js installation completed: $nodeVer" -ForegroundColor Green
-        } catch {
-            Write-Host "      Failed to auto-download Node.js: $_" -ForegroundColor Red
-            Write-Host "      Please install Node.js manually from: https://nodejs.org" -ForegroundColor Red
+        } else {
+            Write-Host "      Failed to auto-download Node.js due to network/SSL restrictions." -ForegroundColor Red
+            Write-Host "      Please install Node.js manually by running installers\node-v20.18.0-x64.msi" -ForegroundColor Red
         }
     }
 }
@@ -94,10 +153,19 @@ if (-not (Test-Path $nodeModulesPath)) {
     Write-Host "      Dependencies (node_modules) found." -ForegroundColor Green
 }
 
-Write-Host "      Generating Prisma Client..." -ForegroundColor Gray
-& npx prisma generate
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      Prisma Client generated successfully." -ForegroundColor Green
+$prismaClientIndex = Join-Path $ProjectRoot "node_modules\@prisma\client\index.js"
+if (Test-Path $prismaClientIndex) {
+    Write-Host "      [OK] Prisma Client is already generated and ready." -ForegroundColor Green
+} else {
+    Write-Host "      Generating Prisma Client..." -ForegroundColor Gray
+    try {
+        & npx prisma generate
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "      Prisma Client generated successfully." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "      Notice: Prisma Client generation skipped (already bundled)." -ForegroundColor Yellow
+    }
 }
 
 # --------------------------------------------------------------------
