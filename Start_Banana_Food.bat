@@ -49,16 +49,16 @@ if /i "%PORT_OPEN%"=="True" (
 
 :launch_ui
 
-echo [2/2] Opening Banana Food POS window...
+echo [2/2] Opening Banana Food POS window with Silent Instant Printing...
 where msedge >nul 2>&1
 if %errorlevel% equ 0 (
-    start msedge --app=http://localhost:3000
+    start msedge --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\edge-pos-profile" --app=http://localhost:3000
     exit
 )
 
 where chrome >nul 2>&1
 if %errorlevel% equ 0 (
-    start chrome --app=http://localhost:3000
+    start chrome --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\chrome-pos-profile" --app=http://localhost:3000
     exit
 )
 
