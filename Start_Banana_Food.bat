@@ -32,8 +32,22 @@ if /i "%PORT_OPEN%"=="True" (
 ) else (
     echo Starting POS Server in background...
     wscript.exe "%~dp0scripts\start_server_hidden.vbs"
-    timeout /t 3 /nobreak >nul
+    echo Waiting for server to be ready...
+    set count=0
+    :wait_loop
+    set /a count+=1
+    timeout /t 1 /nobreak >nul
+    powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 3000 -WarningAction SilentlyContinue).TcpTestSucceeded" > "%temp%\bf_port_check.txt" 2>&1
+    set /p PORT_READY=<"%temp%\bf_port_check.txt"
+    del /f /q "%temp%\bf_port_check.txt" >nul 2>&1
+    if /i "!PORT_READY!"=="True" (
+        echo [OK] Server is ready!
+        goto launch_ui
+    )
+    if !count! lss 12 goto wait_loop
 )
+
+:launch_ui
 
 echo [2/2] Opening Banana Food POS window...
 where msedge >nul 2>&1
