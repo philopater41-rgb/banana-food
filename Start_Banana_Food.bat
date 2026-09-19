@@ -50,17 +50,27 @@ if /i "%PORT_OPEN%"=="True" (
 :launch_ui
 
 echo [2/2] Opening Banana Food POS window with Silent Instant Printing...
-where msedge >nul 2>&1
-if %errorlevel% equ 0 (
-    start msedge --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\edge-pos-profile" --app=http://localhost:3000
+
+:: 1. Direct path check for Microsoft Edge (Standard on 64-bit Windows)
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
+    start "" "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\edge-pos-profile" --app=http://localhost:3000
+    exit
+)
+if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" (
+    start "" "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\edge-pos-profile" --app=http://localhost:3000
     exit
 )
 
-where chrome >nul 2>&1
-if %errorlevel% equ 0 (
-    start chrome --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\chrome-pos-profile" --app=http://localhost:3000
+:: 2. Direct path check for Google Chrome
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
+    start "" "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\chrome-pos-profile" --app=http://localhost:3000
+    exit
+)
+if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" (
+    start "" "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\chrome-pos-profile" --app=http://localhost:3000
     exit
 )
 
-start http://localhost:3000
+:: 3. Registry App Path fallback
+start msedge --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\edge-pos-profile" --app=http://localhost:3000 2>nul || start chrome --kiosk-printing --user-data-dir="%LOCALAPPDATA%\BananaFoodPOS\chrome-pos-profile" --app=http://localhost:3000 2>nul || start http://localhost:3000
 exit
