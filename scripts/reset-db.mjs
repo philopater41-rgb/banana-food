@@ -43,6 +43,9 @@ async function resetDb() {
   console.log('9. Deleting PurchaseInvoice...');
   await prisma.purchaseInvoice.deleteMany({});
 
+  console.log('9b. Deleting Suppliers...');
+  await prisma.supplier.deleteMany({});
+
   console.log('10. Deleting WastageLog...');
   await prisma.wastageLog.deleteMany({});
 
