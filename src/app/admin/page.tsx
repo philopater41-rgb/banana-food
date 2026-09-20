@@ -10,7 +10,7 @@ import {
   CreditCard, Smartphone, RotateCcw, UserPlus, Tag, 
   FileText, Download, BarChart3, Receipt, Truck,
   HelpCircle, ShieldAlert, ArrowDownRight, ArrowUpRight,
-  Eye, Search, Filter, Printer, Clock, Store, Menu
+  Eye, Search, Filter, Printer, Clock, Store, Menu, Loader2
 } from 'lucide-react';
 
 interface KPIState {
@@ -155,8 +155,9 @@ export default function AdminPage() {
     quantity: string;
     purchaseUnit: string;
     totalPrice: string;
+    sellingPrice?: string;
   }>>([
-    { itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '' },
+    { itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '', sellingPrice: '' },
   ]);
   // Settle Payment State
   const [showPayModal, setShowPayModal] = useState(false);
@@ -301,6 +302,7 @@ export default function AdminPage() {
   // 6. Expenses State
   const [expenses, setExpenses] = useState<any[]>([]);
   const [expensesTodayTotal, setExpensesTodayTotal] = useState(0);
+  const [expensesMonthTotal, setExpensesMonthTotal] = useState(0);
   const [expensesGrandTotal, setExpensesGrandTotal] = useState(0);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
   const [expenseSearchQuery, setExpenseSearchQuery] = useState('');
@@ -587,6 +589,7 @@ export default function AdminPage() {
             purchaseUnit: it.purchaseUnit || 'كجم',
             unitPrice: unit,
             totalPrice: tot,
+            sellingPrice: it.sellingPrice ? parseFloat(it.sellingPrice) : undefined,
           };
         });
 
@@ -611,9 +614,9 @@ export default function AdminPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'فشل حفظ فاتورة المشتريات');
 
-      triggerAlert('success', 'تم تسجيل فاتورة المشتريات وتحديث تكلفة البضاعة والمخزن بنجاح!');
+      triggerAlert('success', 'تم تسجيل فاتورة المشتريات وتحديث تكلفة البضاعة والمخزن وسعر البيع بنجاح!');
       setShowAddPurchaseModal(false);
-      setPurItems([{ itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '' }]);
+      setPurItems([{ itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '', sellingPrice: '' }]);
       setPurPaidAmount('');
       fetchSuppliersAndPurchases();
       fetchInventory();
@@ -1055,6 +1058,7 @@ export default function AdminPage() {
         const data = await res.json();
         setExpenses(data.expenses || []);
         setExpensesTodayTotal(data.todayTotal || 0);
+        setExpensesMonthTotal(data.monthTotal || 0);
         setExpensesGrandTotal(data.grandTotal || 0);
       }
     } catch (e) {
@@ -1933,20 +1937,32 @@ export default function AdminPage() {
                         </span>
                       </div>
 
-                      {/* 5. Discounts */}
+                      {/* 5. Discounts (Daily & Monthly Prominently Displayed) */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/20 to-transparent">
-                        <span className="text-[11px] text-gray-400 block">
-                          {isDaily ? 'خصومات اليوم' : 'خصومات الشهر'}
-                        </span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-gray-400 block font-semibold">
+                            {isDaily ? 'خصومات اليوم' : 'خصومات الشهر'}
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono">
+                            تخفيضات
+                          </span>
+                        </div>
                         <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
                           <span className="text-xl font-bold text-amber-400 font-mono">
                             EGP {discounts.toFixed(2)}
                           </span>
-                          <span className="text-[10px] text-gray-400">تخفيضات</span>
+                          <span className="text-[10px] text-gray-300">
+                            {isDaily ? 'اليوم الحالي' : 'الشهر الحالي'}
+                          </span>
                         </div>
-                        <span className="text-[10px] text-gray-500 mt-1 block">
-                          خصومات ممنوحة للعملاء
-                        </span>
+                        <div className="mt-2 pt-1.5 border-t border-amber-500/15 flex items-center justify-between text-[11px]">
+                          <span className="text-gray-400">
+                            {isDaily ? 'خصومات الشهر:' : 'خصومات اليوم:'}
+                          </span>
+                          <span className="font-mono font-bold text-amber-300">
+                            EGP {(isDaily ? (ledgerData.monthSummary?.totalDiscounts || 0) : (ledgerData.todaySummary?.totalDiscounts || 0)).toFixed(2)}
+                          </span>
+                        </div>
                       </div>
 
                       {/* 6. Cash in Drawer & Payment methods */}
@@ -2005,8 +2021,11 @@ export default function AdminPage() {
                       <tbody className="divide-y divide-white/5">
                         {loadingLedger ? (
                           <tr>
-                            <td colSpan={7} className="p-8 text-center text-gray-400">
-                              جاري تحميل سجل الأيام...
+                            <td colSpan={7} className="p-10 text-center text-gray-400">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Loader2 className="w-7 h-7 text-cyan-400 animate-spin" />
+                                <span className="text-xs font-semibold text-gray-300">جاري تحميل سجل الأيام من الداتابيز...</span>
+                              </div>
                             </td>
                           </tr>
                         ) : filteredDays.length === 0 ? (
@@ -2127,8 +2146,11 @@ export default function AdminPage() {
                       <tbody className="divide-y divide-white/5">
                         {loadingLedger ? (
                           <tr>
-                            <td colSpan={8} className="p-8 text-center text-gray-400">
-                              جاري تحميل سجل الشهور...
+                            <td colSpan={8} className="p-10 text-center text-gray-400">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Loader2 className="w-7 h-7 text-purple-400 animate-spin" />
+                                <span className="text-xs font-semibold text-gray-300">جاري تحميل سجل الشهور من الداتابيز...</span>
+                              </div>
                             </td>
                           </tr>
                         ) : filteredMonths.length === 0 ? (
@@ -2997,7 +3019,7 @@ export default function AdminPage() {
               </div>
 
               {/* KPI Summary Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="glass-panel p-4 rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/20 to-transparent">
                   <span className="text-[11px] text-gray-400 block">مصروفات اليوم</span>
                   <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
@@ -3005,6 +3027,15 @@ export default function AdminPage() {
                     <span className="text-[10px] text-gray-400">من الدرج اليوم</span>
                   </div>
                   <span className="text-[10px] text-gray-500 mt-1 block">تخصم تلقائياً من صافي كاش اليومية</span>
+                </div>
+
+                <div className="glass-panel p-4 rounded-2xl border border-rose-500/20 bg-gradient-to-br from-rose-950/20 to-transparent">
+                  <span className="text-[11px] text-gray-400 block">مصروفات هذا الشهر</span>
+                  <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
+                    <span className="text-2xl font-bold text-rose-400 font-mono">EGP {expensesMonthTotal.toFixed(2)}</span>
+                    <span className="text-[10px] text-gray-400">إجمالي الشهر</span>
+                  </div>
+                  <span className="text-[10px] text-gray-500 mt-1 block">مجموع المصروفات للشهر الحالي</span>
                 </div>
 
                 <div className="glass-panel p-4 rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-950/20 to-transparent">
@@ -3057,8 +3088,11 @@ export default function AdminPage() {
                     <tbody className="divide-y divide-white/5">
                       {loadingExpenses ? (
                         <tr>
-                          <td colSpan={5} className="p-8 text-center text-gray-400">
-                            جاري تحميل سجل المصروفات...
+                          <td colSpan={5} className="p-10 text-center text-gray-400">
+                            <div className="flex flex-col items-center justify-center gap-2">
+                              <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
+                              <span className="text-xs font-semibold text-gray-300">جاري تحميل سجل المصروفات من الداتابيز...</span>
+                            </div>
                           </td>
                         </tr>
                       ) : filteredExpenses.length === 0 ? (
@@ -3187,11 +3221,12 @@ export default function AdminPage() {
                 </div>
 
                 {/* Column Headers */}
-                <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-gray-400 px-2 py-1 bg-white/5 rounded-lg">
-                  <div className="col-span-5">صنف الخضار / الفاكهة</div>
+                <div className="grid grid-cols-12 gap-1.5 text-[11px] font-bold text-gray-400 px-2 py-1 bg-white/5 rounded-lg">
+                  <div className="col-span-3">صنف الخضار / الفاكهة</div>
                   <div className="col-span-2">الوحدة</div>
                   <div className="col-span-2">الكمية</div>
-                  <div className="col-span-2">إجمالي السعر (EGP)</div>
+                  <div className="col-span-2">إجمالي الشراء (EGP)</div>
+                  <div className="col-span-2 text-emerald-400">سعر البيع (EGP)</div>
                   <div className="col-span-1 text-center">حذف</div>
                 </div>
 
@@ -3202,19 +3237,19 @@ export default function AdminPage() {
 
                   return (
                     <div key={idx} className="bg-slate-900/70 p-2.5 rounded-xl border border-white/5 space-y-1.5">
-                      <div className="grid grid-cols-12 gap-2 items-center">
+                      <div className="grid grid-cols-12 gap-1.5 items-center">
                         {/* Produce Item Select */}
-                        <div className="col-span-5">
+                        <div className="col-span-3">
                           {!it.isCustom ? (
                             <select
                               value={it.itemId}
                               onChange={(e) => {
                                 const val = e.target.value;
                                 if (val === '__CUSTOM__') {
-                                  setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, isCustom: true, itemId: '', itemName: '', customName: '' } : p)));
+                                  setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, isCustom: true, itemId: '', itemName: '', customName: '', sellingPrice: '' } : p)));
                                 } else {
                                   const prod = productCosts.find((p) => p.id === val);
-                                  setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, isCustom: false, itemId: val, itemName: prod?.name || '', customName: '' } : p)));
+                                  setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, isCustom: false, itemId: val, itemName: prod?.name || '', customName: '', sellingPrice: prod?.price ? String(prod.price) : '' } : p)));
                                 }
                               }}
                               className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-white text-right focus:border-cyan-500"
@@ -3284,23 +3319,40 @@ export default function AdminPage() {
                               const val = e.target.value;
                               setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, quantity: val } : p)));
                             }}
-                            className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-white text-right placeholder-gray-500 focus:border-cyan-500"
+                            className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-white text-right placeholder-gray-500 focus:border-cyan-500 font-mono"
                           />
                         </div>
 
-                        {/* Total Price */}
+                        {/* Total Price (Purchase Cost) */}
                         <div className="col-span-2">
                           <input
                             type="number"
                             min="0"
                             step="any"
-                            placeholder="إجمالي السعر"
+                            placeholder="إجمالي الشراء"
                             value={it.totalPrice}
                             onChange={(e) => {
                               const val = e.target.value;
                               setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, totalPrice: val } : p)));
                             }}
-                            className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-white text-right placeholder-gray-500 focus:border-cyan-500"
+                            className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-white text-right placeholder-gray-500 focus:border-cyan-500 font-mono"
+                          />
+                        </div>
+
+                        {/* Selling Price to Customers */}
+                        <div className="col-span-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder="سعر البيع"
+                            value={it.sellingPrice || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setPurItems((prev) => prev.map((p, i) => (i === idx ? { ...p, sellingPrice: val } : p)));
+                            }}
+                            className="w-full bg-slate-900 border border-emerald-500/40 focus:border-emerald-400 rounded-lg p-2 text-xs text-emerald-300 font-mono text-right placeholder-gray-500"
+                            title="سعر البيع للزبون في الكاشير"
                           />
                         </div>
 
@@ -3320,13 +3372,18 @@ export default function AdminPage() {
                       {/* Helper Unit Price Tag */}
                       {unitPriceCalculated && (
                         <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] bg-cyan-950/40 p-1.5 px-2.5 rounded-lg border border-cyan-500/20 text-cyan-300">
-                          <div className="flex items-center gap-1.5 font-medium">
+                          <div className="flex items-center gap-2 font-medium">
                             <span>سعر التكلفة المحسوب:</span>
                             <span className="font-mono font-bold text-white text-xs">{unitPriceCalculated} EGP</span>
                             <span>لكل {it.purchaseUnit || 'كيلو'}</span>
+                            {it.sellingPrice && (
+                              <span className="text-emerald-300 mr-2">
+                                | سعر البيع المعتمد: <strong className="font-mono text-emerald-400 font-bold">{it.sellingPrice} EGP</strong>
+                              </span>
+                            )}
                           </div>
                           <span className="text-emerald-400 font-semibold text-[10px]">
-                            سيتم تحديث سعر تكلفة الشراء للصنف تلقائياً بالكاشير
+                            سيتم تحديث سعر تكلفة الشراء وسعر البيع تلقائياً بالكاشير
                           </span>
                         </div>
                       )}
@@ -3337,7 +3394,7 @@ export default function AdminPage() {
                 <div className="flex items-center justify-between pt-1">
                   <button
                     type="button"
-                    onClick={() => setPurItems((prev) => [...prev, { itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '' }])}
+                    onClick={() => setPurItems((prev) => [...prev, { itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '', sellingPrice: '' }])}
                     className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1.5 py-1 px-2 rounded-lg hover:bg-cyan-500/10 transition-colors"
                   >
                     <PlusCircle className="w-3.5 h-3.5" />

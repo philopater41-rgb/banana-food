@@ -30,9 +30,14 @@ export async function GET(request: Request) {
 
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const todayTotal = expenses
       .filter((e) => new Date(e.createdAt) >= startOfToday)
+      .reduce((sum, e) => sum + e.amount, 0);
+
+    const monthTotal = expenses
+      .filter((e) => new Date(e.createdAt) >= startOfMonth)
       .reduce((sum, e) => sum + e.amount, 0);
 
     const grandTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
@@ -40,6 +45,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       expenses,
       todayTotal,
+      monthTotal,
       grandTotal,
     });
   } catch (error: any) {

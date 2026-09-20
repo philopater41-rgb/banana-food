@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -21,7 +21,7 @@ import {
   Trash2, Plus, Minus, DollarSign, RefreshCw, 
   CheckCircle2, AlertCircle, AlertTriangle, X, Printer, Lock,
   RotateCcw, Search, Tag, Check, Sparkles,
-  Scale, Edit3, Calculator, TrendingUp, Store
+  Scale, Edit3, Calculator, TrendingUp, Store, Loader2
 } from 'lucide-react';
 
 // Native browser UUID
@@ -138,7 +138,17 @@ export default function POSPage() {
 
   // POS Discount inputs
   const [discountVal, setDiscountVal] = useState('');
+  const [discountMode, setDiscountMode] = useState<'AMOUNT' | 'PERCENT'>('AMOUNT');
   const [discountReason, setDiscountReason] = useState('');
+  const produceQtyInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Preload thermal receipt logo into browser cache
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const img = new Image();
+      img.src = '/banana-logo-bw.png';
+    }
+  }, []);
 
   // Receipt print state
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -362,10 +372,10 @@ export default function POSPage() {
     setClosedInstaPay(String((activeShift.expectedInstaPay || 0).toFixed(2)));
   };
 
-  // Save and Recalculate Cart
+  // Save and Recalculate Cart (Supports both Cash Amount EGP and Percentage %)
   const saveAndRecalculateCart = async (
     updatedItems: LocalCartItem[],
-    customDiscountRate: number | null = null,
+    customDiscount: { rate?: number; amount?: number } | number | null = null,
     extraFields?: Partial<LocalCart>
   ) => {
     const baseCart = cart || {
@@ -384,8 +394,28 @@ export default function POSPage() {
     };
 
     const subtotal = updatedItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
-    const rate = customDiscountRate !== null ? customDiscountRate : (baseCart.discountRate || 0);
-    const disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
+    
+    let disc = 0;
+    let rate = 0;
+
+    if (customDiscount !== null) {
+      if (typeof customDiscount === 'number') {
+        rate = Math.min(100, Math.max(0, customDiscount));
+        disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
+      } else if (typeof customDiscount === 'object') {
+        if (customDiscount.amount !== undefined) {
+          disc = Math.min(subtotal, Math.max(0, customDiscount.amount));
+          rate = subtotal > 0 ? Math.round((disc / subtotal) * 1000) / 10 : 0;
+        } else if (customDiscount.rate !== undefined) {
+          rate = Math.min(100, Math.max(0, customDiscount.rate));
+          disc = Math.round((subtotal * (rate / 100)) * 100) / 100;
+        }
+      }
+    } else {
+      disc = Math.min(subtotal, baseCart.discount || 0);
+      rate = baseCart.discountRate || (subtotal > 0 ? Math.round((disc / subtotal) * 1000) / 10 : 0);
+    }
+
     const total = Math.max(0, subtotal - disc);
 
     const updatedCart: LocalCart = {
@@ -564,74 +594,34 @@ export default function POSPage() {
     } else {
       setProduceQty(existingCartItem ? existingCartItem.qty.toString() : '1');
     }
-    setSavePricePermanently(true);
+    setSavePricePermanently(false);
     setShowProduceModal(true);
+    setTimeout(() => {
+      produceQtyInputRef.current?.focus();
+      produceQtyInputRef.current?.select();
+    }, 60);
   };
 
-  // 3-Way Auto-Calculator Handlers
+  // 3-Way Auto-Calculator Handlers (Maintained for internal calculations)
   const handleProduceCostChange = (val: string) => {
     setProduceCost(val);
-    const cost = parseFloat(val);
-    const margin = parseFloat(produceMargin);
-    const price = parseFloat(producePrice);
-
-    if (!isNaN(cost) && cost > 0) {
-      if (!isNaN(margin)) {
-        // Price = Cost * (1 + Margin / 100)
-        const calcPrice = cost * (1 + margin / 100);
-        setProducePrice((Math.round(calcPrice * 100) / 100).toString());
-      } else if (!isNaN(price) && price >= 0) {
-        // Margin = ((Price - Cost) / Cost) * 100
-        const calcMargin = ((price - cost) / cost) * 100;
-        setProduceMargin(calcMargin.toFixed(1));
-      }
-    }
   };
 
   const handleProducePriceChange = (val: string) => {
     setProducePrice(val);
-    const price = parseFloat(val);
-    const cost = parseFloat(produceCost);
-    const margin = parseFloat(produceMargin);
-
-    if (!isNaN(price) && price >= 0) {
-      if (!isNaN(cost) && cost > 0) {
-        // Margin = ((Price - Cost) / Cost) * 100
-        const calcMargin = ((price - cost) / cost) * 100;
-        setProduceMargin(calcMargin.toFixed(1));
-      } else if (!isNaN(margin) && margin > -100) {
-        // Cost = Price / (1 + Margin / 100)
-        const calcCost = price / (1 + margin / 100);
-        setProduceCost((Math.round(calcCost * 100) / 100).toString());
-      }
-    }
   };
 
   const handleProduceMarginChange = (val: string) => {
     setProduceMargin(val);
-    const margin = parseFloat(val);
-    const cost = parseFloat(produceCost);
-    const price = parseFloat(producePrice);
-
-    if (!isNaN(margin)) {
-      if (!isNaN(cost) && cost > 0) {
-        // Price = Cost * (1 + Margin / 100)
-        const calcPrice = cost * (1 + margin / 100);
-        setProducePrice((Math.round(calcPrice * 100) / 100).toString());
-      } else if (!isNaN(price) && price >= 0 && margin > -100) {
-        // Cost = Price / (1 + Margin / 100)
-        const calcCost = price / (1 + margin / 100);
-        setProduceCost((Math.round(calcCost * 100) / 100).toString());
-      }
-    }
   };
 
   const handleConfirmProduceItem = async () => {
     if (!selectedProduceItem) return;
 
-    const priceNum = parseFloat(producePrice);
-    if (!Number.isFinite(priceNum) || priceNum < 0) {
-      triggerAlert('error', 'من فضلك اكتب سعر بيع صحيح.');
+    // Price is locked to registered price in system (cashier cannot change)
+    const priceNum = selectedProduceItem.price || parseFloat(producePrice) || 0;
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      triggerAlert('error', 'سعر البيع غير محدد للصنف.');
       return;
     }
 
@@ -641,39 +631,7 @@ export default function POSPage() {
       return;
     }
 
-    const costNum = parseFloat(produceCost) || 0;
-
-    // Permanent price update in DB & Dexie
-    if (savePricePermanently) {
-      try {
-        await offlineDB.items.update(selectedProduceItem.id, {
-          price: priceNum,
-          cost: costNum,
-        });
-
-        setItems((prev) =>
-          prev.map((it) =>
-            it.id === selectedProduceItem.id ? { ...it, price: priceNum, cost: costNum } : it
-          )
-        );
-
-        if (isOnline) {
-          fetch('/api/items', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: selectedProduceItem.id,
-              price: priceNum,
-              cost: costNum,
-            }),
-          }).catch((e) => console.warn('Failed to patch item price:', e));
-        }
-
-        triggerAlert('success', `تم تحديث سعر "${selectedProduceItem.name}" في السيستم بنجاح`);
-      } catch (err) {
-        console.error('Error saving permanent price:', err);
-      }
-    }
+    const costNum = selectedProduceItem.cost || parseFloat(produceCost) || 0;
 
     await addItemToCartDirectly(
       selectedProduceItem,
@@ -767,17 +725,30 @@ export default function POSPage() {
     triggerAlert('success', 'فضينا الفاتورة وخلاص جاهزة للزبون اللي جاي');
   };
 
-  // Discount Handlers (Free entry + Reason mandatory)
-  const handleDiscountChange = (value: string) => {
+  // Discount Handlers (Supports cash money EGP and percentage %)
+  const handleDiscountChange = (value: string, mode: 'AMOUNT' | 'PERCENT' = discountMode) => {
     setDiscountVal(value);
     if (!cart) return;
 
-    const enteredDiscount = value === '' ? 0 : Number(value);
-    if (!Number.isFinite(enteredDiscount) || enteredDiscount < 0) return;
+    const entered = value === '' ? 0 : Number(value);
+    if (!Number.isFinite(entered) || entered < 0) return;
 
-    const discount = Math.min(enteredDiscount, 100);
-    if (discount !== enteredDiscount) setDiscountVal(String(discount));
-    void saveAndRecalculateCart(cart.items, discount, { discountReason });
+    if (mode === 'AMOUNT') {
+      void saveAndRecalculateCart(cart.items, { amount: entered }, { discountReason });
+    } else {
+      const discountPct = Math.min(entered, 100);
+      if (discountPct !== entered) setDiscountVal(String(discountPct));
+      void saveAndRecalculateCart(cart.items, { rate: discountPct }, { discountReason });
+    }
+  };
+
+  const toggleDiscountMode = (newMode: 'AMOUNT' | 'PERCENT') => {
+    if (newMode === discountMode) return;
+    setDiscountMode(newMode);
+    setDiscountVal('');
+    if (cart) {
+      void saveAndRecalculateCart(cart.items, { amount: 0 }, { discountReason });
+    }
   };
 
   const handleDiscountReasonChange = (value: string) => {
@@ -898,7 +869,7 @@ export default function POSPage() {
       setReceiptOrder(newOrder);
       setTimeout(() => {
         window.print();
-      }, 150);
+      }, 300);
 
       triggerAlert('success', `تمام يا فنان! قفلنا الحساب وجاري طباعة وصل ${receiptNumber}`);
       triggerSync();
@@ -1129,7 +1100,9 @@ export default function POSPage() {
           <img 
             src="/banana-logo-bw.png" 
             alt="بانانا فود" 
-            className="receipt-logo" 
+            className="receipt-logo"
+            loading="eager"
+            decoding="sync"
           />
           <div className="receipt-title mt-1 font-black text-sm">بانانا فود - Banana Food</div>
           <div className="text-[10px] font-bold text-gray-800">محل خضار وفاكهة - بانانا فود</div>
@@ -1432,7 +1405,20 @@ export default function POSPage() {
 
               {/* Items Grid */}
               <div className="flex-1 overflow-y-auto pl-1">
-                {filteredItems.length > 0 ? (
+                {loading ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 gap-3 py-16">
+                    <div className="relative">
+                      <div className="w-12 h-12 rounded-full border-2 border-emerald-500/20 border-t-emerald-400 animate-spin" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <ShoppingBag className="w-5 h-5 text-emerald-400 animate-pulse" />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold text-white">جاري تحميل البضاعة وقراءة الأسعار...</p>
+                      <p className="text-xs text-gray-400">بنجهزلك قائمة الخضار والفاكهة من الداتابيز</p>
+                    </div>
+                  </div>
+                ) : filteredItems.length > 0 ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
                     {filteredItems.map((item) => (
                       <button
@@ -1576,38 +1562,62 @@ export default function POSPage() {
 
             {/* Bottom Checkout, Discount & Simple Payment */}
             <div className="p-3.5 border-t border-white/5 bg-[#090d16] shrink-0 space-y-3">
-              {/* Discount Section (Editable & Reason Mandatory) */}
+              {/* Discount Section with Money (EGP) and Percent (%) Toggle */}
               <div className="bg-slate-900/80 border border-white/10 rounded-xl p-2.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1">
                     <Tag className="w-3.5 h-3.5 text-yellow-400" />
-                    <span>خصم للزبون (لو حابب تعمله تخفيض)</span>
+                    <span>خصم للزبون (تخفيض)</span>
                   </span>
-                  {cart && cart.discount > 0 && (
-                    <span className="text-[10px] text-rose-400 font-bold font-mono">
-                      -{cart.discount.toFixed(2)} جنيه ({cart.discountRate}%)
-                    </span>
-                  )}
+
+                  {/* Mode Toggle Buttons */}
+                  <div className="flex items-center bg-black/50 p-0.5 rounded-lg border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => toggleDiscountMode('AMOUNT')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                        discountMode === 'AMOUNT'
+                          ? 'bg-amber-500 text-slate-950 shadow-sm'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      فلوس (ج.م)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleDiscountMode('PERCENT')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                        discountMode === 'PERCENT'
+                          ? 'bg-amber-500 text-slate-950 shadow-sm'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      نسبة (%)
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-4">
+                  <div className="col-span-5 relative">
                     <input
                       type="number"
                       value={discountVal}
                       onChange={(e) => handleDiscountChange(e.target.value)}
                       className="w-full bg-slate-900 border border-white/15 rounded-lg py-1 px-2 text-xs text-white placeholder-gray-500 text-center focus:border-yellow-400 focus:outline-none font-mono"
-                      placeholder="نسبة %"
+                      placeholder={discountMode === 'AMOUNT' ? 'المبلغ ج.م' : 'نسبة %'}
                       min="0"
-                      max="100"
+                      max={discountMode === 'PERCENT' ? 100 : undefined}
                     />
+                    <span className="absolute left-2 top-1.5 text-[10px] text-yellow-400 font-bold">
+                      {discountMode === 'AMOUNT' ? 'ج.م' : '%'}
+                    </span>
                   </div>
-                  <div className="col-span-8">
+                  <div className="col-span-7">
                     <input
                       type="text"
                       value={discountReason}
                       onChange={(e) => handleDiscountReasonChange(e.target.value)}
-                      placeholder="اكتب سبب الخصم (لازم يتكتب عشان ينزل في الوصل) *"
+                      placeholder="اكتب سبب الخصم (مطلوب) *"
                       className={`w-full bg-slate-900 border rounded-lg py-1 px-2 text-xs text-white placeholder-gray-500 text-right focus:outline-none ${
                         cart && cart.discount > 0 && !discountReason.trim()
                           ? 'border-rose-500/80 bg-rose-950/20'
@@ -1627,7 +1637,7 @@ export default function POSPage() {
                 {cart && cart.discount > 0 && (
                   <div className="flex justify-between text-xs text-rose-400 flex-row-reverse">
                     <span>
-                      الخصم ({cart.discountRate || 0}%)
+                      الخصم ({cart.discount.toFixed(2)} ج.م / {cart.discountRate || 0}%)
                       {discountReason ? ` [${discountReason}]` : ''}:
                     </span>
                     <span className="font-mono">-{cart.discount.toFixed(2)} جنيه</span>
@@ -1811,103 +1821,28 @@ export default function POSPage() {
                     </div>
                   </div>
 
-                  {/* 2. 3-Way Auto-Calculator: Cost, Price, Margin % */}
-                  <div className="p-3.5 bg-slate-900/90 border border-white/10 rounded-2xl space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-white flex items-center gap-1.5">
-                        <Calculator className="w-4 h-4 text-emerald-400" />
-                        <span>حسبة الأسعار والمكسب (3 خانات ذكية)</span>
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                      {/* Cost Input */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-300 mb-1">
-                          سعر التكلفة (شراء):
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            value={produceCost}
-                            onChange={(e) => handleProduceCostChange(e.target.value)}
-                            placeholder="مثلاً 20"
-                            className="w-full bg-[#080d1a] border border-white/15 focus:border-amber-400 rounded-xl py-2 px-3 text-sm text-white font-mono text-center focus:outline-none transition-colors"
-                          />
-                          <span className="absolute left-2.5 top-2.5 text-[10px] text-gray-500">ج.م</span>
-                        </div>
-                        <span className="text-[9px] text-gray-500 block text-center mt-1">سعر الجملة</span>
-                      </div>
-
-                      {/* Price Input (Main Highlight) */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-emerald-300 mb-1">
-                          سعر البيع الحالي:
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            value={producePrice}
-                            onChange={(e) => handleProducePriceChange(e.target.value)}
-                            placeholder="مثلاً 25"
-                            className="w-full bg-[#080d1a] border-2 border-emerald-500/60 focus:border-emerald-400 rounded-xl py-2 px-3 text-sm font-black text-emerald-300 font-mono text-center focus:outline-none transition-colors shadow-inner"
-                          />
-                          <span className="absolute left-2.5 top-2.5 text-[10px] text-emerald-400 font-bold">ج.م</span>
-                        </div>
-                        <span className="text-[9px] text-emerald-400 font-medium block text-center mt-1">
-                          السعر لـ {produceUnit}
+                  {/* 2. Locked Approved Selling Price (Read-only for Cashier) */}
+                  <div className="p-3.5 bg-slate-900/90 border border-emerald-500/25 rounded-2xl flex items-center justify-between flex-row-reverse">
+                    <div className="text-right">
+                      <span className="text-[11px] text-gray-400 block font-medium">سعر البيع المعتمد للصنف:</span>
+                      <div className="flex items-baseline gap-1 mt-0.5">
+                        <span className="text-2xl font-black text-emerald-400 font-mono">
+                          {currentPriceVal.toFixed(2)}
                         </span>
-                      </div>
-
-                      {/* Margin % Input */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-300 mb-1">
-                          نسبة المكسب:
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step="0.5"
-                            value={produceMargin}
-                            onChange={(e) => handleProduceMarginChange(e.target.value)}
-                            placeholder="مثلاً 25%"
-                            className="w-full bg-[#080d1a] border border-white/15 focus:border-yellow-400 rounded-xl py-2 px-3 text-sm text-yellow-300 font-mono text-center focus:outline-none transition-colors"
-                          />
-                          <span className="absolute left-2.5 top-2.5 text-[10px] text-yellow-500 font-bold">%</span>
-                        </div>
-                        <span className="text-[9px] text-gray-500 block text-center mt-1">هامش الربح %</span>
+                        <span className="text-xs text-emerald-500 font-bold">ج.م / {produceUnit}</span>
                       </div>
                     </div>
 
-                    {/* Live Profit Banner */}
-                    <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between flex-row-reverse text-xs">
-                      <div className="flex items-center gap-1.5 text-gray-300">
-                        <TrendingUp className="w-4 h-4 text-emerald-400" />
-                        <span>صافي ربح {produceUnit}:</span>
-                        <strong className={`font-mono ${unitProfit >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}`}>
-                          {unitProfit.toFixed(2)} ج.م
-                        </strong>
-                      </div>
-
-                      <div>
-                        {unitProfit > 0 ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
-                            ربح {produceMargin}%
-                          </span>
-                        ) : unitProfit === 0 ? (
-                          <span className="px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-300 font-bold text-[10px]">
-                            سعر التكلفة
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px]">
-                            أقل من التكلفة بخسارة!
-                          </span>
-                        )}
-                      </div>
+                    <div className="text-left flex flex-col items-start gap-1">
+                      <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 font-semibold border border-emerald-500/20 flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-emerald-400" />
+                        <span>سعر معتمد من الإدارة</span>
+                      </span>
+                      {currentCostVal > 0 && (
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          التكلفة: {currentCostVal.toFixed(2)} ج.م
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -2000,13 +1935,22 @@ export default function POSPage() {
 
                       <div className="flex-1 relative">
                         <input
+                          ref={produceQtyInputRef}
+                          autoFocus
                           type="number"
                           step={produceUnit === 'كيلو' ? '0.05' : '1'}
                           min="0.05"
                           value={produceQty}
                           onChange={(e) => setProduceQty(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleConfirmProduceItem();
+                            }
+                          }}
                           placeholder="1"
-                          className="w-full bg-slate-900 border-2 border-white/20 focus:border-emerald-400 rounded-xl py-2.5 px-3 text-lg font-black text-white font-mono text-center focus:outline-none"
+                          className="w-full bg-slate-900 border-2 border-emerald-500/50 focus:border-emerald-400 rounded-xl py-2.5 px-3 text-lg font-black text-white font-mono text-center focus:outline-none"
                         />
                         <span className="absolute left-3 top-3 text-xs text-gray-400 font-bold">
                           {produceUnit}
@@ -2100,29 +2044,6 @@ export default function POSPage() {
                         </div>
                       )}
                     </div>
-                  </div>
-
-                  {/* 5. Save Price Permanently Checkbox */}
-                  <div 
-                    className="p-3 bg-slate-900/60 border border-white/10 rounded-xl flex items-center justify-between gap-3 cursor-pointer hover:border-white/20 transition-all"
-                    onClick={() => setSavePricePermanently(!savePricePermanently)}
-                  >
-                    <div className="text-right">
-                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <span>حفظ السعر الجديد في النظام للمرات القادمة</span>
-                      </div>
-                      <span className="text-[10px] text-gray-400 block mt-0.5">
-                        لو علمت عليها، السيستم هيسجل إن ده سعر بيع وتكلفة الصنف من هنا ورايح
-                      </span>
-                    </div>
-
-                    <input
-                      type="checkbox"
-                      checked={savePricePermanently}
-                      onChange={(e) => setSavePricePermanently(e.target.checked)}
-                      className="w-4 h-4 rounded text-emerald-500 accent-emerald-500 cursor-pointer shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                    />
                   </div>
 
                   {/* 6. Action Buttons */}
@@ -2852,6 +2773,9 @@ export default function POSPage() {
           </div>
         )}
       </div>
+
+      {/* Pre-mounted thermal logo to guarantee instant cache and painting on thermal print */}
+      <img src="/banana-logo-bw.png" alt="" className="hidden" aria-hidden="true" />
 
       {/* Thermal receipt print-only view: Clean Customer Sales Receipt (No KOT) */}
       {receiptOrder && (

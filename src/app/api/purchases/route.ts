@@ -107,27 +107,31 @@ export async function POST(request: Request) {
         const unit = qty > 0 ? tot / qty : tot;
 
         // A) Update wholesale cost in Item table (Produce Item) so POS and Reports reflect latest market cost
-        if (unit > 0) {
-          try {
-            let matchedItem = null;
-            if (it.itemId) {
-              matchedItem = await tx.item.findUnique({ where: { id: it.itemId } });
+        // A) Update wholesale cost & selling price in Item table (Produce Item) so POS and Reports reflect latest market cost
+        try {
+          let matchedItem = null;
+          if (it.itemId) {
+            matchedItem = await tx.item.findUnique({ where: { id: it.itemId } });
+          }
+          if (!matchedItem && it.itemName) {
+            matchedItem = await tx.item.findFirst({ where: { name: it.itemName.trim() } });
+          }
+          if (matchedItem) {
+            const updateData: any = {};
+            if (unit > 0) updateData.cost = unit;
+            if (qty > 0) updateData.stockQty = { increment: qty };
+            if (it.sellingPrice !== undefined && it.sellingPrice !== '' && Number(it.sellingPrice) > 0) {
+              updateData.price = Number(it.sellingPrice);
             }
-            if (!matchedItem && it.itemName) {
-              matchedItem = await tx.item.findFirst({ where: { name: it.itemName.trim() } });
-            }
-            if (matchedItem) {
+            if (Object.keys(updateData).length > 0) {
               await tx.item.update({
                 where: { id: matchedItem.id },
-                data: {
-                  cost: unit,
-                  ...(qty > 0 ? { stockQty: { increment: qty } } : {}),
-                },
+                data: updateData,
               });
             }
-          } catch (itemErr) {
-            console.warn('Could not update Item.cost and stockQty:', itemErr);
           }
+        } catch (itemErr) {
+          console.warn('Could not update Item.cost, price and stockQty:', itemErr);
         }
 
         // B) Update RawMaterial stock & cost if matched or specified
