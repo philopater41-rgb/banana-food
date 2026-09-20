@@ -1457,6 +1457,20 @@ export default function AdminPage() {
         <div className="flex-1 overflow-y-auto p-3.5 sm:p-6 space-y-4 sm:space-y-6">
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'dashboard' && (
+            loadingAnalytics ? (
+              <div className="flex flex-col items-center justify-center min-h-[420px] glass-panel rounded-3xl border border-white/5 p-12 text-center my-6">
+                <div className="relative mb-5">
+                  <div className="w-16 h-16 rounded-full border-4 border-cyan-500/20 border-t-cyan-400 animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <TrendingUp className="w-6 h-6 text-cyan-400 animate-pulse" />
+                  </div>
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">جاري قراءة وتحميل مؤشرات المحل والأرباح...</h3>
+                <p className="text-xs text-gray-400 max-w-md leading-relaxed">
+                  يتم الآن جلب المبيعات، النواقص، الأرباح، ونثريات اليوم لحظياً من قاعدة البيانات.
+                </p>
+              </div>
+            ) : (
             <div className="space-y-6">
               {/* Low Stock Alert Section - أصناف قربت تخلص في المحل */}
               {lowStockItems && lowStockItems.length > 0 && (
@@ -1785,10 +1799,25 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
+            )
           )}
 
           {/* TAB: INVOICES LEDGER (DAILY & MONTHLY) */}
           {activeTab === 'invoices-ledger' && (
+            loadingLedger && !ledgerData.todaySummary && (!ledgerData.days || ledgerData.days.length === 0) ? (
+              <div className="flex flex-col items-center justify-center min-h-[420px] glass-panel rounded-3xl border border-white/5 p-12 text-center my-6">
+                <div className="relative mb-5">
+                  <div className="w-16 h-16 rounded-full border-4 border-cyan-500/20 border-t-cyan-400 animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Calendar className="w-6 h-6 text-cyan-400 animate-pulse" />
+                  </div>
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">جاري قراءة وتحميل دفتر فواتير ومبيعات المحل...</h3>
+                <p className="text-xs text-gray-400 max-w-md leading-relaxed">
+                  يتم الآن تجميع إحصائيات المبيعات، الأرباح، والخصومات اليومية والشهرية من قاعدة البيانات.
+                </p>
+              </div>
+            ) : (
             <div className="space-y-6">
               {/* Header & Sub-nav Switcher */}
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -1848,13 +1877,15 @@ export default function AdminPage() {
                 const netProfit = summary.netProfit !== undefined ? summary.netProfit : (netSales - cogs);
                 const returnsAmount = summary.returnsAmount || 0;
                 const returnsCount = summary.returnsCount || 0;
-                const discounts = summary.totalDiscounts || 0;
                 const ordersCount = summary.ordersCount || 0;
                 const avgTicket = summary.avgTicket || 0;
                 const cashDrawer = summary.payments?.CASH || 0;
                 const visa = summary.payments?.VISA || 0;
                 const instapay = summary.payments?.INSTAPAY || 0;
                 const vodafoneCash = summary.payments?.VODAFONE_CASH || 0;
+
+                const todayDiscounts = ledgerData.todaySummary?.totalDiscounts || 0;
+                const monthDiscounts = ledgerData.monthSummary?.totalDiscounts || 0;
 
                 return (
                   <div className="space-y-2">
@@ -1872,7 +1903,7 @@ export default function AdminPage() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
                       {/* 1. Net Sales */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-transparent">
                         <span className="text-[11px] text-gray-400 block">
@@ -1905,7 +1936,53 @@ export default function AdminPage() {
                         </span>
                       </div>
 
-                      {/* 3. Average Ticket */}
+                      {/* 3. Daily Discounts (Dedicated KPI Card) */}
+                      <div className="glass-panel p-3.5 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-950/30 via-slate-900/50 to-transparent">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-amber-300 block font-bold">
+                            خصومات اليوم (النهاردة)
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold font-mono">
+                            اليوم
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
+                          <span className="text-xl font-bold text-amber-400 font-mono">
+                            EGP {todayDiscounts.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] text-gray-300">
+                            تخفيضات اليوم
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-500 mt-1 block">
+                          إجمالي الخصم الممنوح لليوم
+                        </span>
+                      </div>
+
+                      {/* 4. Monthly Discounts (Dedicated KPI Card) */}
+                      <div className="glass-panel p-3.5 rounded-2xl border border-orange-500/30 bg-gradient-to-br from-orange-950/30 via-slate-900/50 to-transparent">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-orange-300 block font-bold">
+                            خصومات هذا الشهر
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 font-semibold font-mono">
+                            الشهر
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
+                          <span className="text-xl font-bold text-orange-400 font-mono">
+                            EGP {monthDiscounts.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] text-gray-300">
+                            تخفيضات الشهر
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-500 mt-1 block">
+                          مجموع خصومات شهر {ledgerData.monthSummary?.monthNameAr || 'الحالي'}
+                        </span>
+                      </div>
+
+                      {/* 5. Average Ticket */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-950/20 to-transparent">
                         <span className="text-[11px] text-gray-400 block">
                           {isDaily ? 'متوسط فاتورة اليوم' : 'متوسط فاتورة الشهر'}
@@ -1921,7 +1998,7 @@ export default function AdminPage() {
                         </span>
                       </div>
 
-                      {/* 4. Returns */}
+                      {/* 6. Returns */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-rose-500/20 bg-gradient-to-br from-rose-950/20 to-transparent">
                         <span className="text-[11px] text-gray-400 block">
                           {isDaily ? 'مرتجعات اليوم' : 'مرتجعات الشهر'}
@@ -1937,35 +2014,7 @@ export default function AdminPage() {
                         </span>
                       </div>
 
-                      {/* 5. Discounts (Daily & Monthly Prominently Displayed) */}
-                      <div className="glass-panel p-3.5 rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/20 to-transparent">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-gray-400 block font-semibold">
-                            {isDaily ? 'خصومات اليوم' : 'خصومات الشهر'}
-                          </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono">
-                            تخفيضات
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
-                          <span className="text-xl font-bold text-amber-400 font-mono">
-                            EGP {discounts.toFixed(2)}
-                          </span>
-                          <span className="text-[10px] text-gray-300">
-                            {isDaily ? 'اليوم الحالي' : 'الشهر الحالي'}
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-1.5 border-t border-amber-500/15 flex items-center justify-between text-[11px]">
-                          <span className="text-gray-400">
-                            {isDaily ? 'خصومات الشهر:' : 'خصومات اليوم:'}
-                          </span>
-                          <span className="font-mono font-bold text-amber-300">
-                            EGP {(isDaily ? (ledgerData.monthSummary?.totalDiscounts || 0) : (ledgerData.todaySummary?.totalDiscounts || 0)).toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* 6. Cash in Drawer & Payment methods */}
+                      {/* 7. Cash in Drawer & Payment methods */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-950/20 to-transparent">
                         <span className="text-[11px] text-gray-400 block">
                           {isDaily ? 'كاش الدرج (اليوم)' : 'كاش الدرج (الشهر)'}
@@ -2060,8 +2109,14 @@ export default function AdminPage() {
                               <td className="p-3.5 font-mono text-gray-300">
                                 EGP {day.totalSales.toFixed(2)}
                               </td>
-                              <td className="p-3.5 font-mono text-amber-400">
-                                {day.totalDiscounts > 0 ? `- EGP ${day.totalDiscounts.toFixed(2)}` : '—'}
+                              <td className="p-3.5 font-mono">
+                                {day.totalDiscounts > 0 ? (
+                                  <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30">
+                                    - EGP {day.totalDiscounts.toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-500 text-xs">EGP 0.00</span>
+                                )}
                               </td>
                               <td className="p-3.5 font-mono font-bold text-emerald-400 text-sm">
                                 EGP {day.totalNet.toFixed(2)}
@@ -2190,8 +2245,14 @@ export default function AdminPage() {
                               <td className="p-3.5 font-mono text-gray-300">
                                 EGP {month.totalSales.toFixed(2)}
                               </td>
-                              <td className="p-3.5 font-mono text-amber-400">
-                                {month.totalDiscounts > 0 ? `- EGP ${month.totalDiscounts.toFixed(2)}` : '—'}
+                              <td className="p-3.5 font-mono">
+                                {month.totalDiscounts > 0 ? (
+                                  <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30">
+                                    - EGP {month.totalDiscounts.toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-500 text-xs">EGP 0.00</span>
+                                )}
                               </td>
                               <td className="p-3.5 font-mono font-bold text-emerald-400 text-sm">
                                 EGP {month.totalNet.toFixed(2)}
@@ -2241,6 +2302,7 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
+            )
           )}
 
           {/* TAB 2: PURCHASES & SUPPLIERS */}
@@ -4343,14 +4405,10 @@ export default function AdminPage() {
                     <span className="text-gray-300">
                       متوسط الفاتورة: <strong className="text-purple-400 font-mono">EGP {periodSummary.avgTicket.toFixed(2)}</strong>
                     </span>
-                    {periodSummary.totalDiscounts > 0 && (
-                      <>
-                        <span className="text-gray-500">•</span>
-                        <span className="text-gray-300">
-                          الخصومات: <strong className="text-amber-400 font-mono">EGP {periodSummary.totalDiscounts.toFixed(2)}</strong>
-                        </span>
-                      </>
-                    )}
+                    <span className="text-gray-500">•</span>
+                    <span className="text-gray-300">
+                      الخصومات: <strong className="text-amber-400 font-mono">EGP {(periodSummary.totalDiscounts || 0).toFixed(2)}</strong>
+                    </span>
                   </div>
                 )}
               </div>
@@ -4404,20 +4462,21 @@ export default function AdminPage() {
                     <th className="p-3">الكاشير</th>
                     <th className="p-3">طريقة الدفع</th>
                     <th className="p-3">الأصناف المطلوبة</th>
-                    <th className="p-3">الإجمالي</th>
+                    <th className="p-3 text-center">الخصم</th>
+                    <th className="p-3">الإجمالي الصافي</th>
                     <th className="p-3 text-center">الإيصال</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {loadingPeriodOrders ? (
                     <tr>
-                      <td colSpan={7} className="p-10 text-center text-gray-400">
+                      <td colSpan={8} className="p-10 text-center text-gray-400">
                         جاري تحميل فواتير الفترة...
                       </td>
                     </tr>
                   ) : filteredPeriodOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-10 text-center text-gray-500">
+                      <td colSpan={8} className="p-10 text-center text-gray-500">
                         لا توجد فواتير مطابقة للبحث.
                       </td>
                     </tr>
@@ -4480,15 +4539,19 @@ export default function AdminPage() {
                           <td className="p-3 text-gray-300 max-w-xs truncate" title={itemsSummary}>
                             {itemsSummary || '—'}
                           </td>
+                          <td className="p-3 text-center font-mono">
+                            {order.discount > 0 ? (
+                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                                - EGP {Number(order.discount).toFixed(2)}
+                              </span>
+                            ) : (
+                              <span className="text-gray-500 text-xs">0.00</span>
+                            )}
+                          </td>
                           <td className="p-3 font-mono">
                             <span className="font-bold text-emerald-400 text-sm block">
                               EGP {Number(order.total).toFixed(2)}
                             </span>
-                            {order.discount > 0 && (
-                              <span className="text-[10px] text-amber-400 block">
-                                خصم: EGP {Number(order.discount).toFixed(2)}
-                              </span>
-                            )}
                           </td>
                           <td className="p-3 text-center">
                             <button
