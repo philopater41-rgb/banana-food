@@ -1884,8 +1884,8 @@ export default function AdminPage() {
                 const instapay = summary.payments?.INSTAPAY || 0;
                 const vodafoneCash = summary.payments?.VODAFONE_CASH || 0;
 
-                const todayDiscounts = ledgerData.todaySummary?.totalDiscounts || 0;
-                const monthDiscounts = ledgerData.monthSummary?.totalDiscounts || 0;
+                const discounts = summary.totalDiscounts || 0;
+                const expenses = summary.totalExpenses || 0;
 
                 return (
                   <div className="space-y-2">
@@ -1932,53 +1932,53 @@ export default function AdminPage() {
                           <span className="text-[10px] text-gray-400">COGS: {cogs.toFixed(0)}</span>
                         </div>
                         <span className="text-[10px] text-gray-500 mt-1 block">
-                          المبيعات - تكلفة الخامات
+                          المبيعات - تكلفة الخامات والمصاريف
                         </span>
                       </div>
 
-                      {/* 3. Daily Discounts (Dedicated KPI Card) */}
+                      {/* 3. Discounts (Dynamic: Today when Daily, Month when Monthly) */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-950/30 via-slate-900/50 to-transparent">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-amber-300 block font-bold">
-                            خصومات اليوم (النهاردة)
+                            {isDaily ? 'خصومات اليوم' : 'خصومات الشهر'}
                           </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold font-mono">
-                            اليوم
+                            {isDaily ? 'اليوم' : 'الشهر'}
                           </span>
                         </div>
                         <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
                           <span className="text-xl font-bold text-amber-400 font-mono">
-                            EGP {todayDiscounts.toFixed(2)}
+                            EGP {discounts.toFixed(2)}
                           </span>
                           <span className="text-[10px] text-gray-300">
-                            تخفيضات اليوم
+                            {isDaily ? 'تخفيضات اليوم' : 'تخفيضات الشهر'}
                           </span>
                         </div>
                         <span className="text-[10px] text-gray-500 mt-1 block">
-                          إجمالي الخصم الممنوح لليوم
+                          {isDaily ? 'إجمالي الخصم الممنوح لليوم' : `خصومات شهر ${summary.monthNameAr || 'الحالي'}`}
                         </span>
                       </div>
 
-                      {/* 4. Monthly Discounts (Dedicated KPI Card) */}
+                      {/* 4. Expenses (Dynamic: Today when Daily, Month when Monthly) */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-orange-500/30 bg-gradient-to-br from-orange-950/30 via-slate-900/50 to-transparent">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-orange-300 block font-bold">
-                            خصومات هذا الشهر
+                            {isDaily ? 'مصاريف اليوم' : 'مصاريف الشهر'}
                           </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 font-semibold font-mono">
-                            الشهر
+                            {isDaily ? 'نثريات اليوم' : 'نثريات الشهر'}
                           </span>
                         </div>
                         <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
                           <span className="text-xl font-bold text-orange-400 font-mono">
-                            EGP {monthDiscounts.toFixed(2)}
+                            EGP {expenses.toFixed(2)}
                           </span>
                           <span className="text-[10px] text-gray-300">
-                            تخفيضات الشهر
+                            {isDaily ? 'من الدرج اليوم' : 'إجمالي الشهر'}
                           </span>
                         </div>
                         <span className="text-[10px] text-gray-500 mt-1 block">
-                          مجموع خصومات شهر {ledgerData.monthSummary?.monthNameAr || 'الحالي'}
+                          {isDaily ? 'نثريات وخرجيات تشغيل اليوم' : `مجموع مصروفات شهر ${summary.monthNameAr || 'الحالي'}`}
                         </span>
                       </div>
 
@@ -2062,6 +2062,7 @@ export default function AdminPage() {
                           <th className="p-3.5 text-center">عدد الفواتير</th>
                           <th className="p-3.5">إجمالي المبيعات</th>
                           <th className="p-3.5">الخصومات</th>
+                          <th className="p-3.5">المصاريف</th>
                           <th className="p-3.5">الصافي المحصل</th>
                           <th className="p-3.5">تفصيل طرق الدفع</th>
                           <th className="p-3.5 text-center">استعراض الفواتير</th>
@@ -2070,7 +2071,7 @@ export default function AdminPage() {
                       <tbody className="divide-y divide-white/5">
                         {loadingLedger ? (
                           <tr>
-                            <td colSpan={7} className="p-10 text-center text-gray-400">
+                            <td colSpan={8} className="p-10 text-center text-gray-400">
                               <div className="flex flex-col items-center justify-center gap-2">
                                 <Loader2 className="w-7 h-7 text-cyan-400 animate-spin" />
                                 <span className="text-xs font-semibold text-gray-300">جاري تحميل سجل الأيام من الداتابيز...</span>
@@ -2079,7 +2080,7 @@ export default function AdminPage() {
                           </tr>
                         ) : filteredDays.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="p-8 text-center text-gray-500">
+                            <td colSpan={8} className="p-8 text-center text-gray-500">
                               لا توجد مبيعات مسجلة في الأيام المحددة.
                             </td>
                           </tr>
@@ -2113,6 +2114,15 @@ export default function AdminPage() {
                                 {day.totalDiscounts > 0 ? (
                                   <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30">
                                     - EGP {day.totalDiscounts.toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-500 text-xs">EGP 0.00</span>
+                                )}
+                              </td>
+                              <td className="p-3.5 font-mono">
+                                {day.totalExpenses > 0 ? (
+                                  <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-300 font-bold border border-orange-500/30">
+                                    - EGP {day.totalExpenses.toFixed(2)}
                                   </span>
                                 ) : (
                                   <span className="text-gray-500 text-xs">EGP 0.00</span>
@@ -2193,6 +2203,7 @@ export default function AdminPage() {
                           <th className="p-3.5 text-center">عدد الفواتير</th>
                           <th className="p-3.5">إجمالي المبيعات</th>
                           <th className="p-3.5">الخصومات</th>
+                          <th className="p-3.5">المصاريف</th>
                           <th className="p-3.5">الصافي المحصل</th>
                           <th className="p-3.5">تفصيل طرق الدفع</th>
                           <th className="p-3.5 text-center">استعراض الفواتير</th>
@@ -2201,7 +2212,7 @@ export default function AdminPage() {
                       <tbody className="divide-y divide-white/5">
                         {loadingLedger ? (
                           <tr>
-                            <td colSpan={8} className="p-10 text-center text-gray-400">
+                            <td colSpan={9} className="p-10 text-center text-gray-400">
                               <div className="flex flex-col items-center justify-center gap-2">
                                 <Loader2 className="w-7 h-7 text-purple-400 animate-spin" />
                                 <span className="text-xs font-semibold text-gray-300">جاري تحميل سجل الشهور من الداتابيز...</span>
@@ -2210,7 +2221,7 @@ export default function AdminPage() {
                           </tr>
                         ) : filteredMonths.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="p-8 text-center text-gray-500">
+                            <td colSpan={9} className="p-8 text-center text-gray-500">
                               لا توجد مبيعات مسجلة في الشهور المحددة.
                             </td>
                           </tr>
@@ -2249,6 +2260,15 @@ export default function AdminPage() {
                                 {month.totalDiscounts > 0 ? (
                                   <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30">
                                     - EGP {month.totalDiscounts.toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-500 text-xs">EGP 0.00</span>
+                                )}
+                              </td>
+                              <td className="p-3.5 font-mono">
+                                {month.totalExpenses > 0 ? (
+                                  <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-300 font-bold border border-orange-500/30">
+                                    - EGP {month.totalExpenses.toFixed(2)}
                                   </span>
                                 ) : (
                                   <span className="text-gray-500 text-xs">EGP 0.00</span>
@@ -4408,6 +4428,10 @@ export default function AdminPage() {
                     <span className="text-gray-500">•</span>
                     <span className="text-gray-300">
                       الخصومات: <strong className="text-amber-400 font-mono">EGP {(periodSummary.totalDiscounts || 0).toFixed(2)}</strong>
+                    </span>
+                    <span className="text-gray-500">•</span>
+                    <span className="text-gray-300">
+                      المصاريف: <strong className="text-orange-400 font-mono">EGP {(periodSummary.totalExpenses || 0).toFixed(2)}</strong>
                     </span>
                   </div>
                 )}

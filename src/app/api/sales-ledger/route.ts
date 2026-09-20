@@ -84,7 +84,7 @@ export async function GET(request: Request) {
 
     // If specific date or month is requested, return detailed orders list for that period
     if (dateQuery || monthQuery) {
-      const [allOrders, allReturns] = await Promise.all([
+      const [allOrders, allReturns, allExpenses] = await Promise.all([
         prisma.salesOrder.findMany({
           where: {
             status: { in: ['COMPLETED', 'REFUNDED'] },
@@ -135,6 +135,15 @@ export async function GET(request: Request) {
             createdAt: true,
           },
         }),
+        prisma.cashTransaction.findMany({
+          where: { type: 'PAYOUT' },
+          select: {
+            id: true,
+            amount: true,
+            reason: true,
+            createdAt: true,
+          },
+        }),
       ]);
 
       const filteredOrders = allOrders.filter((order) => {
@@ -155,6 +164,17 @@ export async function GET(request: Request) {
         }
         if (monthQuery) {
           return getBusinessDateStr(retDate, true) === monthQuery;
+        }
+        return true;
+      });
+
+      const filteredExpenses = allExpenses.filter((exp) => {
+        const expDate = exp.createdAt;
+        if (dateQuery) {
+          return getBusinessDateStr(expDate, false) === dateQuery;
+        }
+        if (monthQuery) {
+          return getBusinessDateStr(expDate, true) === monthQuery;
         }
         return true;
       });
@@ -184,7 +204,8 @@ export async function GET(request: Request) {
 
       const returnsAmount = filteredReturns.reduce((sum, r) => sum + (r.totalRefund || 0), 0);
       const returnsCount = filteredReturns.length;
-      const netProfit = totalNet - totalCOGS;
+      const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+      const netProfit = totalNet - totalCOGS - totalExpenses;
 
       return NextResponse.json({
         period: dateQuery ? { type: 'day', value: dateQuery } : { type: 'month', value: monthQuery },
@@ -192,6 +213,7 @@ export async function GET(request: Request) {
           ordersCount: filteredOrders.length,
           totalSales: Number(totalSales.toFixed(2)),
           totalDiscounts: Number(totalDiscounts.toFixed(2)),
+          totalExpenses: Number(totalExpenses.toFixed(2)),
           totalNet: Number(totalNet.toFixed(2)),
           returnsAmount: Number(returnsAmount.toFixed(2)),
           returnsCount,
@@ -201,11 +223,12 @@ export async function GET(request: Request) {
           paymentBreakdown,
         },
         orders: filteredOrders,
+        expenses: filteredExpenses,
       });
     }
 
     // Default: Aggregate all orders into Days & Months summaries with Profit & Returns
-    const [orders, allReturns] = await Promise.all([
+    const [orders, allReturns, allExpenses] = await Promise.all([
       prisma.salesOrder.findMany({
         where: {
           status: { in: ['COMPLETED', 'REFUNDED'] },
@@ -251,6 +274,15 @@ export async function GET(request: Request) {
           createdAt: true,
         },
       }),
+      prisma.cashTransaction.findMany({
+        where: { type: 'PAYOUT' },
+        select: {
+          id: true,
+          amount: true,
+          reason: true,
+          createdAt: true,
+        },
+      }),
     ]);
 
     const daysMap = new Map<
@@ -262,6 +294,7 @@ export async function GET(request: Request) {
         ordersCount: number;
         totalSales: number;
         totalDiscounts: number;
+        totalExpenses: number;
         totalNet: number;
         returnsAmount: number;
         returnsCount: number;
@@ -281,6 +314,7 @@ export async function GET(request: Request) {
         ordersCount: number;
         totalSales: number;
         totalDiscounts: number;
+        totalExpenses: number;
         totalNet: number;
         returnsAmount: number;
         returnsCount: number;
@@ -331,6 +365,7 @@ export async function GET(request: Request) {
           ordersCount: 0,
           totalSales: 0,
           totalDiscounts: 0,
+          totalExpenses: 0,
           totalNet: 0,
           returnsAmount: 0,
           returnsCount: 0,
@@ -360,6 +395,7 @@ export async function GET(request: Request) {
           ordersCount: 0,
           totalSales: 0,
           totalDiscounts: 0,
+          totalExpenses: 0,
           totalNet: 0,
           returnsAmount: 0,
           returnsCount: 0,
@@ -403,15 +439,68 @@ export async function GET(request: Request) {
       }
     }
 
+    // 3. Process Expenses (Payouts)
+    let grandTotalExpenses = 0;
+    for (const exp of allExpenses) {
+      const expDate = exp.createdAt;
+      const dayKey = getBusinessDateStr(expDate, false);
+      const monthKey = getBusinessDateStr(expDate, true);
+      const expAmount = exp.amount || 0;
+      grandTotalExpenses += expAmount;
+
+      if (!daysMap.has(dayKey)) {
+        daysMap.set(dayKey, {
+          date: dayKey,
+          dayNameAr: formatArabicDay(expDate),
+          rawDate: expDate,
+          ordersCount: 0,
+          totalSales: 0,
+          totalDiscounts: 0,
+          totalExpenses: 0,
+          totalNet: 0,
+          returnsAmount: 0,
+          returnsCount: 0,
+          cogs: 0,
+          netProfit: 0,
+          payments: { CASH: 0, VISA: 0, INSTAPAY: 0, VODAFONE_CASH: 0, CASH_OUT: 0 },
+        });
+      }
+      const dayObj = daysMap.get(dayKey)!;
+      dayObj.totalExpenses += expAmount;
+
+      if (!monthsMap.has(monthKey)) {
+        monthsMap.set(monthKey, {
+          month: monthKey,
+          monthNameAr: formatArabicMonth(expDate),
+          rawDate: expDate,
+          daysSet: new Set<string>(),
+          ordersCount: 0,
+          totalSales: 0,
+          totalDiscounts: 0,
+          totalExpenses: 0,
+          totalNet: 0,
+          returnsAmount: 0,
+          returnsCount: 0,
+          cogs: 0,
+          netProfit: 0,
+          payments: { CASH: 0, VISA: 0, INSTAPAY: 0, VODAFONE_CASH: 0, CASH_OUT: 0 },
+        });
+      }
+      const monthObj = monthsMap.get(monthKey)!;
+      monthObj.daysSet.add(dayKey);
+      monthObj.totalExpenses += expAmount;
+    }
+
     const days = Array.from(daysMap.values())
       .map((d) => ({
         ...d,
         totalSales: Number(d.totalSales.toFixed(2)),
         totalDiscounts: Number(d.totalDiscounts.toFixed(2)),
+        totalExpenses: Number(d.totalExpenses.toFixed(2)),
         totalNet: Number(d.totalNet.toFixed(2)),
         returnsAmount: Number(d.returnsAmount.toFixed(2)),
         cogs: Number(d.cogs.toFixed(2)),
-        netProfit: Number(d.netProfit.toFixed(2)),
+        netProfit: Number((d.netProfit - d.totalExpenses).toFixed(2)),
         avgTicket: d.ordersCount > 0 ? Number((d.totalNet / d.ordersCount).toFixed(2)) : 0,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
@@ -424,11 +513,12 @@ export async function GET(request: Request) {
         ordersCount: m.ordersCount,
         totalSales: Number(m.totalSales.toFixed(2)),
         totalDiscounts: Number(m.totalDiscounts.toFixed(2)),
+        totalExpenses: Number(m.totalExpenses.toFixed(2)),
         totalNet: Number(m.totalNet.toFixed(2)),
         returnsAmount: Number(m.returnsAmount.toFixed(2)),
         returnsCount: m.returnsCount,
         cogs: Number(m.cogs.toFixed(2)),
-        netProfit: Number(m.netProfit.toFixed(2)),
+        netProfit: Number((m.netProfit - m.totalExpenses).toFixed(2)),
         avgTicket: m.ordersCount > 0 ? Number((m.totalNet / m.ordersCount).toFixed(2)) : 0,
         payments: m.payments,
       }))
@@ -439,6 +529,7 @@ export async function GET(request: Request) {
       ordersCount: 0,
       totalSales: 0,
       totalDiscounts: 0,
+      totalExpenses: 0,
       totalNet: 0,
       returnsAmount: 0,
       returnsCount: 0,
@@ -454,10 +545,11 @@ export async function GET(request: Request) {
           date: todayStr,
           totalSales: Number(daysMap.get(todayStr)!.totalSales.toFixed(2)),
           totalDiscounts: Number(daysMap.get(todayStr)!.totalDiscounts.toFixed(2)),
+          totalExpenses: Number(daysMap.get(todayStr)!.totalExpenses.toFixed(2)),
           totalNet: Number(daysMap.get(todayStr)!.totalNet.toFixed(2)),
           returnsAmount: Number(daysMap.get(todayStr)!.returnsAmount.toFixed(2)),
           cogs: Number(daysMap.get(todayStr)!.cogs.toFixed(2)),
-          netProfit: Number(daysMap.get(todayStr)!.netProfit.toFixed(2)),
+          netProfit: Number((daysMap.get(todayStr)!.netProfit - daysMap.get(todayStr)!.totalExpenses).toFixed(2)),
           avgTicket:
             daysMap.get(todayStr)!.ordersCount > 0
               ? Number((daysMap.get(todayStr)!.totalNet / daysMap.get(todayStr)!.ordersCount).toFixed(2))
@@ -476,10 +568,11 @@ export async function GET(request: Request) {
           activeDaysCount: monthsMap.get(thisMonthStr)!.daysSet.size,
           totalSales: Number(monthsMap.get(thisMonthStr)!.totalSales.toFixed(2)),
           totalDiscounts: Number(monthsMap.get(thisMonthStr)!.totalDiscounts.toFixed(2)),
+          totalExpenses: Number(monthsMap.get(thisMonthStr)!.totalExpenses.toFixed(2)),
           totalNet: Number(monthsMap.get(thisMonthStr)!.totalNet.toFixed(2)),
           returnsAmount: Number(monthsMap.get(thisMonthStr)!.returnsAmount.toFixed(2)),
           cogs: Number(monthsMap.get(thisMonthStr)!.cogs.toFixed(2)),
-          netProfit: Number(monthsMap.get(thisMonthStr)!.netProfit.toFixed(2)),
+          netProfit: Number((monthsMap.get(thisMonthStr)!.netProfit - monthsMap.get(thisMonthStr)!.totalExpenses).toFixed(2)),
           avgTicket:
             monthsMap.get(thisMonthStr)!.ordersCount > 0
               ? Number((monthsMap.get(thisMonthStr)!.totalNet / monthsMap.get(thisMonthStr)!.ordersCount).toFixed(2))
@@ -492,13 +585,14 @@ export async function GET(request: Request) {
           activeDaysCount: 0,
         };
 
-    const grandNetProfit = grandTotalNet - grandTotalCOGS;
+    const grandNetProfit = grandTotalNet - grandTotalCOGS - grandTotalExpenses;
 
     return NextResponse.json({
       grandTotals: {
         ordersCount: orders.length,
         totalSales: Number(grandTotalSales.toFixed(2)),
         totalDiscounts: Number(grandTotalDiscounts.toFixed(2)),
+        totalExpenses: Number(grandTotalExpenses.toFixed(2)),
         totalNet: Number(grandTotalNet.toFixed(2)),
         returnsAmount: Number(grandReturnsAmount.toFixed(2)),
         returnsCount: allReturns.length,
