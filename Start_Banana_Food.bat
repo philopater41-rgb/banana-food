@@ -15,14 +15,14 @@ if %errorlevel% equ 0 goto launch_ui
 echo Starting POS Server in background...
 wscript.exe "%~dp0scripts\start_server_hidden.vbs"
 
-:: 3. Fast wait loop until port 3000 is ready
+:: 3. Fast wait loop until port 3000 is ready (up to 20s for cold start)
 set count=0
 :wait_loop
 set /a count+=1
 timeout /t 1 /nobreak >nul
 netstat -ano | findstr :3000 | findstr LISTENING >nul 2>&1
 if %errorlevel% equ 0 goto launch_ui
-if !count! lss 8 goto wait_loop
+if !count! lss 20 goto wait_loop
 
 :launch_ui
 echo Opening Banana Food POS...

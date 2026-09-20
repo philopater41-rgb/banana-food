@@ -13,6 +13,6 @@ Else
     nodeCmd = "node"
 End If
 
-' Change directory to project root and run next start hidden (window style 0, wait on return false)
+' Change directory to project root and run npm start hidden (window style 0, wait on return false)
 WshShell.CurrentDirectory = ProjectRoot
-WshShell.Run "cmd.exe /c " & nodeCmd & " ""node_modules\next\dist\bin\next"" start", 0, False
+WshShell.Run "cmd.exe /c npm start", 0, False
