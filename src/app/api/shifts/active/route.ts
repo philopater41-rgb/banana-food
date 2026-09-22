@@ -48,7 +48,7 @@ export async function GET() {
       // Include all cash movements: deposits, expenses, and customer refund payouts
       if (tx.type === 'PAYIN') {
         cashTxImpact += tx.amount;
-      } else if (tx.type === 'PAYOUT') {
+      } else if (tx.type === 'PAYOUT' || tx.type === 'REFUND_PAYOUT') {
         cashTxImpact -= tx.amount;
       }
     }

@@ -157,7 +157,7 @@ export async function POST(request: Request) {
         await tx.cashTransaction.create({
           data: {
             shiftId,
-            type: 'PAYOUT',
+            type: 'REFUND_PAYOUT',
             amount: totalRefundVal,
             reason: `مرتجع فاتورة ${order.receiptNumber || orderId}: ${reason.trim()}`,
           },

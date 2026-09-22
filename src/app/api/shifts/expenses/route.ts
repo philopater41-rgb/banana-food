@@ -7,7 +7,15 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const shiftId = searchParams.get('shiftId');
 
-    const where: any = { type: 'PAYOUT' };
+    const where: any = {
+      type: 'PAYOUT',
+      NOT: {
+        OR: [
+          { type: 'REFUND_PAYOUT' },
+          { reason: { startsWith: 'مرتجع' } },
+        ],
+      },
+    };
     if (shiftId) where.shiftId = shiftId;
 
     const expenses = await prisma.cashTransaction.findMany({

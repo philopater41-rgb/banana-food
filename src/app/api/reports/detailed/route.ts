@@ -89,17 +89,26 @@ export async function GET(request: Request) {
 
     for (const order of orders) {
       if (order.status === 'COMPLETED' || order.status === 'REFUNDED') {
+        const orderReturnedAmt = order.returnedAmount || 0;
+        const isFullyRefunded = order.status === 'REFUNDED' || (orderReturnedAmt >= order.total && order.total > 0);
+        
+        // If order was fully refunded, goods were returned to inventory and net revenue is 0
+        if (isFullyRefunded) continue;
+
+        const orderNet = Math.max(0, order.total - orderReturnedAmt);
+        const netRatio = order.total > 0 ? orderNet / order.total : 1;
+
         totalCompletedOrders += 1;
         totalDiscountAmount += order.discount || 0;
-        totalNetRevenue += (order.total || 0) - (order.returnedAmount || 0);
+        totalNetRevenue += orderNet;
 
         if (order.paymentMethod && paymentBreakdown[order.paymentMethod] !== undefined) {
-          paymentBreakdown[order.paymentMethod] += (order.total || 0) - (order.returnedAmount || 0);
+          paymentBreakdown[order.paymentMethod] += orderNet;
         }
 
         const dateKey = order.createdAt.toISOString().slice(0, 10);
         const dayTrend = dailyTrendsMap.get(dateKey) || { date: dateKey, sales: 0, profit: 0, count: 0 };
-        dayTrend.sales += order.total;
+        dayTrend.sales += orderNet;
         dayTrend.count += 1;
 
         let orderDayProfit = 0;
@@ -125,8 +134,9 @@ export async function GET(request: Request) {
             unitCost = (oi.item as any).cost;
           }
 
-          const itemTotalRevenue = oi.totalPrice;
-          const itemTotalCost = unitCost * oi.qty;
+          const netQty = oi.qty * netRatio;
+          const itemTotalRevenue = oi.totalPrice * netRatio;
+          const itemTotalCost = unitCost * netQty;
           const itemProfit = itemTotalRevenue - itemTotalCost;
 
           totalGrossRevenue += itemTotalRevenue;
@@ -146,7 +156,7 @@ export async function GET(request: Request) {
             marginPct: 0,
           };
 
-          existing.qtySold += oi.qty;
+          existing.qtySold += netQty;
           existing.grossRevenue += itemTotalRevenue;
           existing.totalCost += itemTotalCost;
           existing.netProfit += itemProfit;

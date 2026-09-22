@@ -170,6 +170,11 @@ export async function GET() {
 
     // 6. True Cost (COGS) calculation from recipes
     const calculateOrderCOGS = (order: typeof completedOrders[0]) => {
+      // If order is fully refunded, goods were restocked/returned, so COGS is 0
+      if (order.status === 'REFUNDED' || order.returnStatus === 'FULL' || (order.returnedAmount && order.returnedAmount >= order.total)) {
+        return 0;
+      }
+
       let orderCost = 0;
       for (const oi of order.items) {
         let itemUnitCost = 0;
@@ -186,13 +191,20 @@ export async function GET() {
         }
         orderCost += itemUnitCost * oi.qty;
       }
+
+      // If partially returned, scale COGS by remaining net sales ratio
+      if (order.returnedAmount && order.returnedAmount > 0 && order.total > 0) {
+        const netRatio = Math.max(0, (order.total - order.returnedAmount) / order.total);
+        orderCost = orderCost * netRatio;
+      }
+
       return orderCost;
     };
 
     const todayCOGS = todayOrders.reduce((sum, o) => sum + calculateOrderCOGS(o), 0);
     const monthlyCOGS = monthOrders.reduce((sum, o) => sum + calculateOrderCOGS(o), 0);
 
-    // 7. Expenses: Restocks & Cash Transactions
+    // 7. Expenses: Restocks & Cash Transactions (EXCLUDING customer refunds to avoid double-deducting from net income)
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -218,7 +230,9 @@ export async function GET() {
     let monthlyCashPayouts = 0;
 
     for (const tx of allCashTransactions) {
-      if (tx.type === 'PAYOUT') {
+      // Exclude customer refunds: they are already deducted from sales, NOT store operating expenses
+      const isRefundTx = tx.type === 'REFUND_PAYOUT' || tx.reason.startsWith('مرتجع');
+      if (tx.type === 'PAYOUT' && !isRefundTx) {
         const txOpDate = tx.shift?.openedAt || tx.createdAt;
         const txDayKey = getBusinessDateStr(txOpDate, false);
         const txMonthKey = getBusinessDateStr(txOpDate, true);
@@ -234,9 +248,9 @@ export async function GET() {
     const todayExpenses = (todayRestock._sum.amount || 0) + todayCashPayouts;
     const monthlyExpenses = (monthlyRestock._sum.amount || 0) + monthlyCashPayouts;
 
-    // Real Net Profit = Sales - COGS - other expenses
-    const todayNet = todaySales - todayCOGS - todayCashPayouts;
-    const monthlyNet = monthlySales - monthlyCOGS - monthlyCashPayouts;
+    // Real Net Profit = Net Sales (after returns) - Real COGS - Operating Expenses
+    const todayNet = todaySales - todayCOGS - todayExpenses;
+    const monthlyNet = monthlySales - monthlyCOGS - monthlyExpenses;
 
     // 8. Summarize Daily Sales & Monthly Sales by Shift Operating Date
     const summarizeOrdersByShiftDate = (monthly = false) => {
@@ -378,15 +392,17 @@ export async function GET() {
       dailySales: summarizeOrdersByShiftDate(false),
       monthlySalesHistory: summarizeOrdersByShiftDate(true),
       shiftSummaries,
-      cashTransactions: allCashTransactions.map((tx) => ({
-        id: tx.id,
-        shiftId: tx.shiftId,
-        type: tx.type,
-        amount: tx.amount,
-        reason: tx.reason,
-        createdAt: tx.createdAt,
-        cashierName: tx.shift?.cashierName || tx.shift?.user?.name || 'كاشير',
-      })),
+      cashTransactions: allCashTransactions
+        .filter((tx) => tx.type !== 'REFUND_PAYOUT' && !tx.reason.startsWith('مرتجع'))
+        .map((tx) => ({
+          id: tx.id,
+          shiftId: tx.shiftId,
+          type: tx.type,
+          amount: tx.amount,
+          reason: tx.reason,
+          createdAt: tx.createdAt,
+          cashierName: tx.shift?.cashierName || tx.shift?.user?.name || 'كاشير',
+        })),
     });
   } catch (error: any) {
     console.error('GET admin analytics error:', error);

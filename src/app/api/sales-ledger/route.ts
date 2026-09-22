@@ -49,6 +49,9 @@ export async function GET(request: Request) {
 
     // Helper: calculate recipe cost (COGS) for an order
     const calculateOrderCOGS = (order: {
+      status?: string;
+      total?: number;
+      returnedAmount?: number;
       items: Array<{
         qty: number;
         item?: {
@@ -63,6 +66,9 @@ export async function GET(request: Request) {
         } | null;
       }>;
     }) => {
+      if (order.status === 'REFUNDED') return 0;
+      if (order.returnedAmount && order.total && order.returnedAmount >= order.total) return 0;
+
       let orderCost = 0;
       for (const oi of order.items) {
         let itemUnitCost = 0;
@@ -79,6 +85,12 @@ export async function GET(request: Request) {
         }
         orderCost += itemUnitCost * oi.qty;
       }
+
+      if (order.returnedAmount && order.returnedAmount > 0 && order.total && order.total > 0) {
+        const netRatio = Math.max(0, (order.total - order.returnedAmount) / order.total);
+        orderCost = orderCost * netRatio;
+      }
+
       return orderCost;
     };
 
@@ -136,7 +148,15 @@ export async function GET(request: Request) {
           },
         }),
         prisma.cashTransaction.findMany({
-          where: { type: 'PAYOUT' },
+          where: {
+            type: 'PAYOUT',
+            NOT: {
+              OR: [
+                { type: 'REFUND_PAYOUT' },
+                { reason: { startsWith: 'مرتجع' } },
+              ],
+            },
+          },
           select: {
             id: true,
             amount: true,
@@ -240,6 +260,7 @@ export async function GET(request: Request) {
           subtotal: true,
           discount: true,
           total: true,
+          status: true,
           returnedAmount: true,
           paymentMethod: true,
           createdAt: true,
@@ -275,7 +296,15 @@ export async function GET(request: Request) {
         },
       }),
       prisma.cashTransaction.findMany({
-        where: { type: 'PAYOUT' },
+        where: {
+          type: 'PAYOUT',
+          NOT: {
+            OR: [
+              { type: 'REFUND_PAYOUT' },
+              { reason: { startsWith: 'مرتجع' } },
+            ],
+          },
+        },
         select: {
           id: true,
           amount: true,

@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     for (const tx of shift.transactions) {
       if (tx.type === 'PAYIN') {
         cashTxImpact += tx.amount;
-      } else if (tx.type === 'PAYOUT') {
+      } else if (tx.type === 'PAYOUT' || tx.type === 'REFUND_PAYOUT') {
         cashTxImpact -= tx.amount;
       }
     }
