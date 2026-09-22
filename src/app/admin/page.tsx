@@ -222,6 +222,61 @@ export default function AdminPage() {
     }
     return list;
   }, [productCosts, profitSearchQuery, profitCategoryFilter, profitStockFilter]);
+
+  // Overall Inventory Valuation (Across ALL items in the shop: الكمية × سعر التكلفة)
+  const inventoryValuation = useMemo(() => {
+    let totalCostValue = 0;      // إجمالي رأس مال البضاعة بالمحل (الكمية × التكلفة)
+    let totalRetailValue = 0;    // إجمالي القيمة البيعية المتوقعة (الكمية × البيع)
+    let totalItemsWithStock = 0; // عدد الأصناف المتوفرة برصيد موجب
+    let totalStockQty = 0;       // إجمالي الكميات/الأوزان
+
+    productCosts.forEach((item) => {
+      const stock = Math.max(0, item.stockQty ?? 0);
+      if (stock > 0) {
+        const unitCost = item.unitCost > 0 ? item.unitCost : (item.cost || 0);
+        totalCostValue += stock * unitCost;
+        totalRetailValue += stock * item.price;
+        totalItemsWithStock += 1;
+        totalStockQty += stock;
+      }
+    });
+
+    const totalExpectedProfit = Math.max(0, totalRetailValue - totalCostValue);
+    const overallMarginPct = totalCostValue > 0 ? (totalExpectedProfit / totalCostValue) * 100 : 0;
+
+    return {
+      totalCostValue,
+      totalRetailValue,
+      totalExpectedProfit,
+      overallMarginPct,
+      totalItemsWithStock,
+      totalStockQty,
+    };
+  }, [productCosts]);
+
+  // Filtered Inventory Valuation (For currently filtered items in table)
+  const filteredInventoryValuation = useMemo(() => {
+    let totalCostValue = 0;
+    let totalRetailValue = 0;
+    let totalStockQty = 0;
+
+    filteredProductCosts.forEach((item) => {
+      const stock = Math.max(0, item.stockQty ?? 0);
+      if (stock > 0) {
+        const unitCost = item.unitCost > 0 ? item.unitCost : (item.cost || 0);
+        totalCostValue += stock * unitCost;
+        totalRetailValue += stock * item.price;
+        totalStockQty += stock;
+      }
+    });
+
+    return {
+      totalCostValue,
+      totalRetailValue,
+      totalStockQty,
+    };
+  }, [filteredProductCosts]);
+
   const [lowStockItems, setLowStockItems] = useState<Array<{
     id: string;
     name: string;
@@ -2607,9 +2662,9 @@ export default function AdminPage() {
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-bold text-white">حسبة التكلفة الحقيقية وهوامش المكسب ومخزون المحل</h3>
-                    <p className="text-xs text-gray-400">متابعة الكميات الحالية المتوفرة بالمحل وحدود النواقص وأسعار تكلفة الشراء وهوامش الربح</p>
+                    <p className="text-xs text-gray-400">متابعة الكميات الحالية المتوفرة بالمحل وحدود النواقص وأسعار تكلفة الشراء وهوامش الربح ورأس مال البضاعة</p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                  <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
                     <button
                       onClick={() => {
                         setNewItemName('');
@@ -2623,17 +2678,157 @@ export default function AdminPage() {
                         setNewItemIngredients([]);
                         setShowAddItemModal(true);
                       }}
-                      className="flex-1 sm:flex-initial justify-center px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-xs font-bold hover:from-emerald-600 hover:to-cyan-600 flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+                      className="flex-1 sm:flex-initial justify-center px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-xs font-bold hover:from-emerald-600 hover:to-cyan-600 flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
                     >
                       <PlusCircle className="w-4 h-4" />
                       <span>+ إضافة صنف جديد للمحل</span>
                     </button>
-                    <div className="w-full sm:w-auto p-2.5 px-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-left">
-                      <span className="text-[10px] text-gray-400 block">إجمالي أرباح النهاردة المحققة من البضاعة</span>
-                      <span className="text-sm font-bold text-emerald-400 font-mono">EGP {totalTodayProfit.toFixed(2)}</span>
+                    <button
+                      onClick={() => fetchProductCosts()}
+                      className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 hover:text-white transition-all cursor-pointer"
+                      title="تحديث البيانات"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${loadingCosts ? 'animate-spin text-emerald-400' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* INVENTORY VALUATION & KPI STATS CARDS */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+                  {/* Card 1: TOTAL INVENTORY COST VALUE (THE MAIN REQUIREMENT) */}
+                  <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-emerald-950/50 via-slate-900/90 to-slate-950 border-2 border-emerald-500/40 shadow-xl shadow-emerald-500/10">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                          <Package className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-white block">إجمالي رأس مال البضاعة</span>
+                          <span className="text-[10px] text-emerald-300/80 font-medium">سعر التكلفة الحالي بالمحل</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-semibold">
+                        الكمية × التكلفة
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-2xl font-black text-emerald-400 font-mono tracking-tight">
+                        {inventoryValuation.totalCostValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-xs text-emerald-500 font-bold">ج.م</span>
+                    </div>
+                    <div className="mt-2 text-[11px] text-gray-300/90 flex items-center justify-between border-t border-white/5 pt-1.5">
+                      <span>الأصناف المتوفرة:</span>
+                      <span className="font-mono text-emerald-300 font-bold">
+                        {inventoryValuation.totalItemsWithStock} صنف ({inventoryValuation.totalStockQty.toLocaleString('en-US', { maximumFractionDigits: 1 })} وحدة/كجم)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: TOTAL RETAIL VALUE */}
+                  <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-cyan-950/30 via-slate-900/90 to-slate-950 border border-cyan-500/30 shadow-lg shadow-cyan-500/5">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                          <ShoppingBag className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-white block">القيمة البيعية للبضاعة</span>
+                          <span className="text-[10px] text-cyan-300/80 font-medium">إجمالي السعر للبيع</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono font-semibold">
+                        الكمية × البيع
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-2xl font-black text-cyan-400 font-mono tracking-tight">
+                        {inventoryValuation.totalRetailValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-xs text-cyan-500 font-bold">ج.م</span>
+                    </div>
+                    <div className="mt-2 text-[11px] text-gray-300/90 flex items-center justify-between border-t border-white/5 pt-1.5">
+                      <span>العائد المتوقع:</span>
+                      <span className="font-mono text-cyan-300 font-bold">عند تصريف كامل البضاعة</span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: EXPECTED PROFIT FROM CURRENT STOCK */}
+                  <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-amber-950/30 via-slate-900/90 to-slate-950 border border-amber-500/30 shadow-lg shadow-amber-500/5">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                          <TrendingUp className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-white block">الأرباح المتوقعة من البضاعة</span>
+                          <span className="text-[10px] text-amber-300/80 font-medium">هامش الربح الكلي</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono font-semibold">
+                        {inventoryValuation.overallMarginPct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-2xl font-black text-amber-400 font-mono tracking-tight">
+                        {inventoryValuation.totalExpectedProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-xs text-amber-500 font-bold">ج.م</span>
+                    </div>
+                    <div className="mt-2 text-[11px] text-gray-300/90 flex items-center justify-between border-t border-white/5 pt-1.5">
+                      <span>الربح الإجمالي:</span>
+                      <span className="font-mono text-amber-300 font-bold">البيعي - رأس المال</span>
+                    </div>
+                  </div>
+
+                  {/* Card 4: TODAY'S REALIZED PROFIT */}
+                  <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-purple-950/30 via-slate-900/90 to-slate-950 border border-purple-500/30 shadow-lg shadow-purple-500/5">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                          <DollarSign className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-white block">أرباح مبيعات اليوم المحققة</span>
+                          <span className="text-[10px] text-purple-300/80 font-medium">فواتير اليوم المسجلة</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono font-semibold">
+                        محققة فعلياً
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-2xl font-black text-purple-400 font-mono tracking-tight">
+                        {totalTodayProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-xs text-purple-500 font-bold">ج.م</span>
+                    </div>
+                    <div className="mt-2 text-[11px] text-gray-300/90 flex items-center justify-between border-t border-white/5 pt-1.5">
+                      <span>صافي ربح اليوم:</span>
+                      <span className="font-mono text-purple-300 font-bold">فواتير مسجلة اليوم</span>
                     </div>
                   </div>
                 </div>
+
+                {/* Filter Notice Banner when user is filtering */}
+                {filteredProductCosts.length !== productCosts.length && (
+                  <div className="p-2.5 px-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-300">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>
+                        حسبة الأصناف المفلترة حالياً ({filteredProductCosts.length} صنف من {productCosts.length}):
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 font-mono font-bold">
+                      <span>
+                        إجمالي كميات العرض: <span className="text-white">{filteredInventoryValuation.totalStockQty.toFixed(1)}</span>
+                      </span>
+                      <span>
+                        رأس مال العرض: <span className="text-emerald-400">EGP {filteredInventoryValuation.totalCostValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Quick Search & Filter Bar (Matching POS Experience) */}
                 <div className="bg-slate-900/60 border border-white/10 rounded-xl p-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
@@ -2723,7 +2918,7 @@ export default function AdminPage() {
                 </div>
 
                 <div className="overflow-x-auto rounded-xl border border-white/5">
-                  <table className="w-full text-right text-xs min-w-[850px]">
+                  <table className="w-full text-right text-xs min-w-[950px]">
                     <thead className="bg-slate-900/80 text-gray-400 border-b border-white/5">
                       <tr>
                         <th className="p-3">اسم الصنف</th>
@@ -2733,6 +2928,10 @@ export default function AdminPage() {
                         <th className="p-3">حالة الرصيد</th>
                         <th className="p-3">سعر البيع</th>
                         <th className="p-3">سعر التكلفة</th>
+                        <th className="p-3 bg-emerald-500/10 text-emerald-300 font-bold border-x border-emerald-500/20">
+                          إجمالي قيمة البضاعة
+                          <span className="block text-[10px] text-emerald-400/70 font-normal">(الكمية × التكلفة)</span>
+                        </th>
                         <th className="p-3">المكسب / الوحدة</th>
                         <th className="p-3">نسبة المكسب %</th>
                         <th className="p-3">مبيعات النهاردة</th>
@@ -2743,7 +2942,7 @@ export default function AdminPage() {
                     <tbody className="divide-y divide-white/5">
                       {filteredProductCosts.length === 0 ? (
                         <tr>
-                          <td colSpan={12} className="p-10 text-center text-gray-400">
+                          <td colSpan={13} className="p-10 text-center text-gray-400">
                             <div className="flex flex-col items-center justify-center gap-2">
                               <Search className="w-7 h-7 text-gray-600" />
                               <p className="font-semibold text-sm text-gray-300">
@@ -2768,10 +2967,13 @@ export default function AdminPage() {
                       ) : (
                         filteredProductCosts.map((item) => {
                         const stock = item.stockQty ?? 0;
+                        const safeStock = Math.max(0, stock);
                         const minStock = item.minStockLevel ?? 0;
                         const unit = item.unit || 'كجم';
                         const isOut = stock <= 0;
                         const isLow = minStock > 0 && stock <= minStock;
+                        const unitCost = item.unitCost > 0 ? item.unitCost : (item.cost || 0);
+                        const itemTotalCost = safeStock * unitCost;
 
                         return (
                           <tr key={item.id} className={`hover:bg-white/5 transition-colors ${isOut ? 'bg-rose-950/20' : isLow ? 'bg-amber-950/20' : ''}`}>
@@ -2805,7 +3007,19 @@ export default function AdminPage() {
                               )}
                             </td>
                             <td className="p-3 font-mono text-cyan-400 font-bold">EGP {item.price.toFixed(2)}</td>
-                            <td className="p-3 font-mono text-amber-400">EGP {item.unitCost.toFixed(2)}</td>
+                            <td className="p-3 font-mono text-amber-400">EGP {unitCost.toFixed(2)}</td>
+                            <td className="p-3 font-mono font-bold text-emerald-300 bg-emerald-500/5 border-x border-emerald-500/20">
+                              {safeStock <= 0 ? (
+                                <span className="text-gray-500 font-normal">0.00 ج.م</span>
+                              ) : (
+                                <div>
+                                  <span className="text-sm font-black">EGP {itemTotalCost.toFixed(2)}</span>
+                                  <span className="block text-[10px] text-emerald-400/80 font-sans font-normal">
+                                    {stock} {unit} × {unitCost.toFixed(2)} ج
+                                  </span>
+                                </div>
+                              )}
+                            </td>
                             <td className="p-3 font-mono text-emerald-400 font-bold">EGP {item.profitPerUnit.toFixed(2)}</td>
                             <td className="p-3 font-bold text-purple-300">{item.profitMarginPct}%</td>
                             <td className="p-3 font-bold text-white">{item.qtySoldToday} {unit}</td>
@@ -2814,7 +3028,7 @@ export default function AdminPage() {
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
                                   onClick={() => openEditItemModal(item)}
-                                  className="px-2 py-1 rounded-lg text-cyan-400 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/20 inline-flex items-center gap-1 text-xs transition-all active:scale-95"
+                                  className="px-2 py-1 rounded-lg text-cyan-400 hover:text-white hover:bg-cyan-500/20 border border-cyan-500/20 inline-flex items-center gap-1 text-xs transition-all active:scale-95 cursor-pointer"
                                   title="تعديل بيانات الصنف والأسعار والمخزون"
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
@@ -2822,7 +3036,7 @@ export default function AdminPage() {
                                 </button>
                                 <button
                                   onClick={() => handleDeleteMenuItem(item.id, item.name)}
-                                  className="px-2 py-1 rounded-lg text-rose-400 hover:text-white hover:bg-rose-500/20 border border-rose-500/20 inline-flex items-center gap-1 text-xs transition-all active:scale-95"
+                                  className="px-2 py-1 rounded-lg text-rose-400 hover:text-white hover:bg-rose-500/20 border border-rose-500/20 inline-flex items-center gap-1 text-xs transition-all active:scale-95 cursor-pointer"
                                   title="حذف الصنف"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -2834,6 +3048,25 @@ export default function AdminPage() {
                         );
                       }))}
                     </tbody>
+                    <tfoot className="bg-slate-950/90 border-t-2 border-emerald-500/40 text-xs font-semibold text-white">
+                      <tr>
+                        <td colSpan={2} className="p-3 text-emerald-400 font-bold">
+                          إجمالي المعروض ({filteredProductCosts.length} صنف)
+                        </td>
+                        <td className="p-3 font-mono font-bold text-white">
+                          {filteredInventoryValuation.totalStockQty.toFixed(1)}
+                        </td>
+                        <td colSpan={4}></td>
+                        <td className="p-3 font-mono font-bold text-emerald-400 bg-emerald-500/20 border-x border-emerald-500/30 text-sm">
+                          EGP {filteredInventoryValuation.totalCostValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td colSpan={3}></td>
+                        <td className="p-3 font-mono font-bold text-emerald-400">
+                          EGP {filteredProductCosts.reduce((s, it) => s + it.totalProfitToday, 0).toFixed(2)}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>

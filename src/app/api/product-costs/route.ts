@@ -93,6 +93,19 @@ export async function GET() {
       };
     });
 
+    const totalInventoryCostValue = calculatedItems.reduce((sum, it) => {
+      const stock = Math.max(0, it.stockQty ?? 0);
+      const unitCost = it.unitCost > 0 ? it.unitCost : (it.cost || 0);
+      return sum + (stock * unitCost);
+    }, 0);
+
+    const totalInventoryRetailValue = calculatedItems.reduce((sum, it) => {
+      const stock = Math.max(0, it.stockQty ?? 0);
+      return sum + (stock * it.price);
+    }, 0);
+
+    const totalInventoryExpectedProfit = Math.max(0, totalInventoryRetailValue - totalInventoryCostValue);
+
     return NextResponse.json({
       items: calculatedItems,
       totalTodayProfit: Number(
@@ -101,6 +114,9 @@ export async function GET() {
       totalTodayCost: Number(
         calculatedItems.reduce((sum, it) => sum + it.totalCostToday, 0).toFixed(2)
       ),
+      totalInventoryCostValue: Number(totalInventoryCostValue.toFixed(2)),
+      totalInventoryRetailValue: Number(totalInventoryRetailValue.toFixed(2)),
+      totalInventoryExpectedProfit: Number(totalInventoryExpectedProfit.toFixed(2)),
     });
   } catch (error: any) {
     console.error('GET product costs error:', error);
