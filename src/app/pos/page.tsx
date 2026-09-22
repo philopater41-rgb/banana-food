@@ -1989,70 +1989,50 @@ export default function POSPage() {
                       </div>
                     </div>
 
-                    {/* Bottom Bar: Quick Adjustments for Non-Direct OR Lock Notice for Direct */}
-                    <div className="flex items-center justify-between pt-1 border-t border-white/5 flex-row-reverse text-xs flex-wrap gap-1">
-                      {produceChannel !== 'DIRECT' ? (
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] text-gray-400">تعديل سريع:</span>
-                          <button
-                            type="button"
-                            onClick={() => setProducePrice(baseOriginalPrice.toString())}
-                            className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 text-[11px] font-bold cursor-pointer"
-                            title="استرجاع السعر الأساسي"
-                          >
-                            الأصلي ({baseOriginalPrice}ج)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = parseFloat(producePrice) || baseOriginalPrice;
-                              setProducePrice((cur + 5).toString());
-                            }}
-                            className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
-                          >
-                            +5 ج
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = parseFloat(producePrice) || baseOriginalPrice;
-                              setProducePrice((cur + 10).toString());
-                            }}
-                            className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
-                          >
-                            +10 ج
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = parseFloat(producePrice) || baseOriginalPrice;
-                              setProducePrice((cur + 15).toString());
-                            }}
-                            className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
-                          >
-                            +15 ج
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-gray-400 flex items-center gap-1">
-                          <Lock className="w-3 h-3 text-emerald-400" />
-                          <span>سعر البيع المعتمد من الإدارة للمحل</span>
-                        </div>
-                      )}
-
-                      {/* Live Unit Profit Indicator */}
-                      <div className="flex items-center gap-1.5 text-[11px]">
-                        <span className="text-gray-400">التكلفة: <strong className="text-gray-300 font-mono">{currentCostVal.toFixed(2)}</strong> ج</span>
-                        <span className="text-gray-600">|</span>
-                        <span className={`font-bold font-mono px-2 py-0.5 rounded-lg ${
-                          unitProfit > 0 
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        }`}>
-                          مكسب الوحدة: {unitProfit > 0 ? `+${unitProfit.toFixed(2)}` : unitProfit.toFixed(2)} ج ({profitPercentage}%)
-                        </span>
+                    {/* Quick Adjustments only for Non-Direct channels (Talabat / Tray / Custom) */}
+                    {produceChannel !== 'DIRECT' && (
+                      <div className="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-white/5 flex-row-reverse text-xs">
+                        <span className="text-[10px] text-gray-400">تعديل سريع:</span>
+                        <button
+                          type="button"
+                          onClick={() => setProducePrice(baseOriginalPrice.toString())}
+                          className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 text-[11px] font-bold cursor-pointer"
+                          title="استرجاع السعر الأساسي"
+                        >
+                          الأصلي ({baseOriginalPrice}ج)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = parseFloat(producePrice) || baseOriginalPrice;
+                            setProducePrice((cur + 5).toString());
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                        >
+                          +5 ج
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = parseFloat(producePrice) || baseOriginalPrice;
+                            setProducePrice((cur + 10).toString());
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                        >
+                          +10 ج
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = parseFloat(producePrice) || baseOriginalPrice;
+                            setProducePrice((cur + 15).toString());
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                        >
+                          +15 ج
+                        </button>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {/* 4. Unit Selector (كيلو / حزمة / قطعة) - Removed طبق as requested */}
@@ -2290,20 +2270,9 @@ export default function POSPage() {
                     </div>
 
                     <div className="text-left text-xs text-gray-300 font-mono">
-                      <div className="text-gray-300 text-[11px] font-bold">
+                      <div className="text-gray-300 text-xs font-bold">
                         {currentQtyVal} {produceUnit} × {currentPriceVal.toFixed(2)} ج
                       </div>
-                      {currentCostVal > 0 && (
-                        <div className="text-emerald-400 text-xs font-black mt-1 flex items-center gap-1">
-                          <span>صافي المكسب:</span>
-                          <span className="bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-300 font-mono">
-                            +{totalProfit.toFixed(2)} ج.م
-                          </span>
-                          <span className="text-[10px] text-gray-400 font-normal">
-                            (شراء: {(currentCostVal * currentQtyVal).toFixed(2)} ج)
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
 
