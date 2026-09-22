@@ -21,7 +21,8 @@ import {
   Trash2, Plus, Minus, DollarSign, RefreshCw, 
   CheckCircle2, AlertCircle, AlertTriangle, X, Printer, Lock,
   RotateCcw, Search, Tag, Check, Sparkles,
-  Scale, Edit3, Calculator, TrendingUp, Store, Loader2
+  Scale, Edit3, Calculator, TrendingUp, Store, Loader2,
+  Bike, Package
 } from 'lucide-react';
 
 // Native browser UUID
@@ -107,7 +108,9 @@ export default function POSPage() {
   const [produceCost, setProduceCost] = useState<string>('');
   const [producePrice, setProducePrice] = useState<string>('');
   const [produceMargin, setProduceMargin] = useState<string>('25.0');
-  const [produceUnit, setProduceUnit] = useState<'كيلو' | 'حزمة' | 'قطعة'>('كيلو');
+  const [produceUnit, setProduceUnit] = useState<'كيلو' | 'طبق' | 'حزمة' | 'قطعة'>('كيلو');
+  const [produceChannel, setProduceChannel] = useState<'DIRECT' | 'TALABAT' | 'TRAY' | 'CUSTOM'>('DIRECT');
+  const [produceNote, setProduceNote] = useState<string>('');
   const [produceQty, setProduceQty] = useState<string>('1');
   const [savePricePermanently, setSavePricePermanently] = useState(true);
 
@@ -574,7 +577,7 @@ export default function POSPage() {
       setProduceMargin('25.0');
     }
 
-    let calculatedUnit: 'كيلو' | 'حزمة' | 'قطعة' = 'كيلو';
+    let calculatedUnit: 'كيلو' | 'طبق' | 'حزمة' | 'قطعة' = 'كيلو';
     if (existingCartItem?.unit) {
       calculatedUnit = existingCartItem.unit as any;
     } else {
@@ -589,6 +592,24 @@ export default function POSPage() {
     }
     setProduceUnit(calculatedUnit);
 
+    // Setup channel and prep note
+    if (existingCartItem) {
+      const cmt = existingCartItem.comment || '';
+      setProduceNote(cmt);
+      if (cmt.includes('طلبات')) {
+        setProduceChannel('TALABAT');
+      } else if (existingCartItem.unit === 'طبق' || cmt.includes('طبق')) {
+        setProduceChannel('TRAY');
+      } else if (cmt) {
+        setProduceChannel('CUSTOM');
+      } else {
+        setProduceChannel('DIRECT');
+      }
+    } else {
+      setProduceChannel('DIRECT');
+      setProduceNote('');
+    }
+
     if (!existingCartItem && calculatedUnit === 'كيلو' && scale.isConnected && scale.currentWeight > 0) {
       setProduceQty(scale.currentWeight.toFixed(3));
     } else {
@@ -600,6 +621,28 @@ export default function POSPage() {
       produceQtyInputRef.current?.focus();
       produceQtyInputRef.current?.select();
     }, 60);
+  };
+
+  // Channel Selection Helper
+  const handleSelectChannel = (channel: 'DIRECT' | 'TALABAT' | 'TRAY' | 'CUSTOM') => {
+    setProduceChannel(channel);
+    if (channel === 'DIRECT') {
+      if (produceNote === 'طلبات' || produceNote === 'طبق مجهز' || produceNote.startsWith('طبق')) {
+        setProduceNote('');
+      }
+      if (produceUnit === 'طبق') {
+        setProduceUnit('كيلو');
+      }
+    } else if (channel === 'TALABAT') {
+      if (!produceNote || produceNote === 'طبق مجهز') {
+        setProduceNote('طلبات');
+      }
+    } else if (channel === 'TRAY') {
+      setProduceUnit('طبق');
+      if (!produceNote || produceNote === 'طلبات') {
+        setProduceNote('طبق مجهز');
+      }
+    }
   };
 
   // 3-Way Auto-Calculator Handlers (Maintained for internal calculations)
@@ -618,10 +661,14 @@ export default function POSPage() {
   const handleConfirmProduceItem = async () => {
     if (!selectedProduceItem) return;
 
-    // Price is locked to registered price in system (cashier cannot change)
-    const priceNum = selectedProduceItem.price || parseFloat(producePrice) || 0;
+    // Use entered custom price if valid, or fall back to item price
+    const enteredPrice = parseFloat(producePrice);
+    const priceNum = Number.isFinite(enteredPrice) && enteredPrice > 0 
+      ? enteredPrice 
+      : (selectedProduceItem.price || 0);
+
     if (!Number.isFinite(priceNum) || priceNum <= 0) {
-      triggerAlert('error', 'سعر البيع غير محدد للصنف.');
+      triggerAlert('error', 'سعر البيع غير محدد أو غير صحيح للصنف.');
       return;
     }
 
@@ -631,13 +678,23 @@ export default function POSPage() {
       return;
     }
 
-    const costNum = selectedProduceItem.cost || parseFloat(produceCost) || 0;
+    // Cost remains anchored to item base cost so profit calculations reflect true margin!
+    const costNum = selectedProduceItem.cost && selectedProduceItem.cost > 0 
+      ? selectedProduceItem.cost 
+      : (parseFloat(produceCost) || 0);
+
+    // Build comment based on note and channel
+    let finalComment = produceNote.trim();
+    if (!finalComment) {
+      if (produceChannel === 'TALABAT') finalComment = 'طلبات';
+      else if (produceChannel === 'TRAY') finalComment = 'طبق مجهز';
+    }
 
     await addItemToCartDirectly(
       selectedProduceItem,
       [],
       priceNum,
-      '',
+      finalComment,
       qtyNum,
       produceUnit,
       costNum,
@@ -647,6 +704,8 @@ export default function POSPage() {
     setShowProduceModal(false);
     setSelectedProduceItem(null);
     setEditingCartItemId(null);
+    setProduceNote('');
+    setProduceChannel('DIRECT');
   };
 
   const handleEditCartItem = (cartItem: LocalCartItem) => {
@@ -1724,10 +1783,12 @@ export default function POSPage() {
         {showProduceModal && selectedProduceItem && (() => {
           const currentCostVal = parseFloat(produceCost) || 0;
           const currentPriceVal = parseFloat(producePrice) || 0;
+          const baseOriginalPrice = selectedProduceItem.price || 0;
           const currentQtyVal = parseFloat(produceQty) || 0;
           const unitProfit = Math.round((currentPriceVal - currentCostVal) * 100) / 100;
           const totalItemPrice = Math.round(currentPriceVal * currentQtyVal * 100) / 100;
           const totalProfit = Math.round(unitProfit * currentQtyVal * 100) / 100;
+          const profitPercentage = currentCostVal > 0 ? ((unitProfit / currentCostVal) * 100).toFixed(0) : '0';
 
           return (
             <div 
@@ -1735,7 +1796,7 @@ export default function POSPage() {
               onClick={() => { setShowProduceModal(false); setSelectedProduceItem(null); setEditingCartItemId(null); }}
             >
               <div 
-                className="w-full max-w-lg glass-panel bg-[#0d1527]/95 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 relative text-right shadow-2xl overflow-y-auto max-h-[92vh]"
+                className="w-full max-w-lg glass-panel bg-[#0d1527]/95 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 relative text-right shadow-2xl overflow-y-auto max-h-[94vh]"
                 dir="rtl"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
@@ -1767,82 +1828,291 @@ export default function POSPage() {
                       <h3 className="text-lg sm:text-xl font-black text-white">
                         {selectedProduceItem.name}
                       </h3>
+                      {baseOriginalPrice > 0 && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-lg bg-white/5 border border-white/10 text-gray-300 font-mono">
+                          السعر الأساسي: {baseOriginalPrice} ج
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      حدّد السعر والوحدة والوزن (الأسعار بتتحسب تلقائياً لحظة بلحظة)
+                      اختر قناة البيع أو التجهيز وحدّد سعر البيع والكمية مع حساب مباشر للربح
                     </p>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  {/* 1. Unit Selector (كيلو / حزمة / قطعة) */}
+                <div className="space-y-3.5">
+                  {/* 1. Channel / Prep Quick Selector */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-300 mb-2 flex items-center justify-between">
-                      <span>الوحدة وطريقة البيع:</span>
-                      <span className="text-[11px] font-normal text-emerald-400">اختار الطريقة المناسبة للصنف</span>
+                    <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-white">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span>قناة البيع أو التجهيز:</span>
+                      </span>
+                      <span className="text-[11px] font-normal text-emerald-400">حدد القناة لضبط السعر والملاحظة</span>
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectChannel('DIRECT')}
+                        className={`py-2 px-1.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                          produceChannel === 'DIRECT'
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md font-black scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <Store className="w-4 h-4" />
+                        <span>عادي (محل)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSelectChannel('TALABAT')}
+                        className={`py-2 px-1.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                          produceChannel === 'TALABAT'
+                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <Bike className="w-4 h-4" />
+                        <span>طلبات</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSelectChannel('TRAY')}
+                        className={`py-2 px-1.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                          produceChannel === 'TRAY'
+                            ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md font-black scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <Package className="w-4 h-4" />
+                        <span>طبق مجهز</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSelectChannel('CUSTOM')}
+                        className={`py-2 px-1.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                          produceChannel === 'CUSTOM'
+                            ? 'bg-purple-500 text-white border-purple-400 shadow-md font-black scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <Tag className="w-4 h-4" />
+                        <span>مخصص</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. Prep Detail / Note Input + Quick Chips */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                        <Edit3 className="w-3.5 h-3.5 text-gray-400" />
+                        <span>بيان الصنف أو التجهيز (اختياري):</span>
+                      </label>
+                      <span className="text-[10px] text-gray-400">ستظهر الملاحظة في الفاتورة والإيصال</span>
+                    </div>
+
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={produceNote}
+                        onChange={(e) => setProduceNote(e.target.value)}
+                        placeholder="مثال: كوسة متقورة، جاهز للطبخ، طلبات، غسيل وتقطيع..."
+                        className="w-full bg-slate-900/90 border border-white/15 focus:border-emerald-400 rounded-xl py-2 px-3 text-xs sm:text-sm font-semibold text-white placeholder-gray-500 focus:outline-none transition-all"
+                      />
+                      {produceNote && (
+                        <button
+                          type="button"
+                          onClick={() => setProduceNote('')}
+                          className="absolute left-2.5 top-2.5 text-gray-400 hover:text-white p-0.5 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Quick Prep Chips */}
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      <span className="text-[10px] text-gray-400 shrink-0">مقترحات:</span>
+                      {[
+                        'كوسة متقورة',
+                        'طبق مجهز',
+                        'طلبات',
+                        'جاهز للطبخ',
+                        'تقوير وتنظيف',
+                        'متقطع وجاهز',
+                      ].map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => {
+                            setProduceNote(tag);
+                            if (tag.includes('طلبات')) {
+                              setProduceChannel('TALABAT');
+                            } else if (tag.includes('طبق') || tag.includes('متقورة')) {
+                              setProduceChannel('TRAY');
+                              setProduceUnit('طبق');
+                            }
+                          }}
+                          className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                            produceNote === tag
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-white/5'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 3. Editable Selling Price with Base Cost & Real Profit Indicator */}
+                  <div className="p-3 bg-slate-900/95 border border-emerald-500/30 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between flex-row-reverse">
+                      <div className="text-right flex-1">
+                        <label className="text-xs font-bold text-gray-200 block mb-1">
+                          سعر البيع ({produceUnit}):
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={producePrice}
+                              onChange={(e) => setProducePrice(e.target.value)}
+                              onFocus={(e) => e.target.select()}
+                              className="w-full bg-slate-950 border-2 border-emerald-500/50 focus:border-emerald-400 rounded-xl py-2 px-3 text-xl font-black text-emerald-400 font-mono text-center focus:outline-none"
+                            />
+                            <span className="absolute left-3 top-2.5 text-xs text-emerald-500 font-bold">
+                              ج.م / {produceUnit}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Price Modifiers & Comparison */}
+                    <div className="flex items-center justify-between pt-1 border-t border-white/5 flex-row-reverse text-xs flex-wrap gap-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-gray-400">تعديل سريع:</span>
+                        <button
+                          type="button"
+                          onClick={() => setProducePrice(baseOriginalPrice.toString())}
+                          className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 text-[11px] font-bold cursor-pointer"
+                          title="استرجاع السعر الأساسي"
+                        >
+                          الأصلي ({baseOriginalPrice}ج)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = parseFloat(producePrice) || baseOriginalPrice;
+                            setProducePrice((cur + 5).toString());
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                        >
+                          +5 ج
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = parseFloat(producePrice) || baseOriginalPrice;
+                            setProducePrice((cur + 10).toString());
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                        >
+                          +10 ج
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = parseFloat(producePrice) || baseOriginalPrice;
+                            setProducePrice((cur + 15).toString());
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                        >
+                          +15 ج
+                        </button>
+                      </div>
+
+                      {/* Live Unit Profit Indicator */}
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="text-gray-400">التكلفة: <strong className="text-gray-300 font-mono">{currentCostVal.toFixed(2)}</strong> ج</span>
+                        <span className="text-gray-600">|</span>
+                        <span className={`font-bold font-mono px-2 py-0.5 rounded-lg ${
+                          unitProfit > 0 
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}>
+                          مكسب الوحدة: {unitProfit > 0 ? `+${unitProfit.toFixed(2)}` : unitProfit.toFixed(2)} ج ({profitPercentage}%)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Unit Selector (كيلو / طبق / حزمة / قطعة) */}
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                      <span>الوحدة وطريقة البيع:</span>
+                      <span className="text-[11px] font-normal text-emerald-400">اختار طريقة القياس المناسبة</span>
+                    </label>
+                    <div className="grid grid-cols-4 gap-2">
                       <button
                         type="button"
                         onClick={() => setProduceUnit('كيلو')}
-                        className={`py-2.5 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        className={`py-2 px-2 rounded-2xl border text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                           produceUnit === 'كيلو'
                             ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg shadow-emerald-500/25 scale-[1.02]'
                             : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
                         }`}
                       >
-                        <Scale className="w-4 h-4" />
-                        <span>كيلو (ميزان)</span>
+                        <Scale className="w-3.5 h-3.5" />
+                        <span>كيلو</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProduceUnit('طبق');
+                          if (produceChannel === 'DIRECT') setProduceChannel('TRAY');
+                        }}
+                        className={`py-2 px-2 rounded-2xl border text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          produceUnit === 'طبق'
+                            ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-lg shadow-cyan-500/25 scale-[1.02]'
+                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        <Package className="w-3.5 h-3.5" />
+                        <span>طبق</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => setProduceUnit('حزمة')}
-                        className={`py-2.5 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        className={`py-2 px-2 rounded-2xl border text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                           produceUnit === 'حزمة'
                             ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg shadow-emerald-500/25 scale-[1.02]'
                             : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
                         }`}
                       >
-                        <span>حزمة (ربطة)</span>
+                        <span>حزمة</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => setProduceUnit('قطعة')}
-                        className={`py-2.5 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        className={`py-2 px-2 rounded-2xl border text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                           produceUnit === 'قطعة'
                             ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg shadow-emerald-500/25 scale-[1.02]'
                             : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
                         }`}
                       >
-                        <span>قطعة (بالواحدة)</span>
+                        <span>قطعة</span>
                       </button>
-                    </div>
-                  </div>
-
-                  {/* 2. Locked Approved Selling Price (Read-only for Cashier) */}
-                  <div className="p-3.5 bg-slate-900/90 border border-emerald-500/25 rounded-2xl flex items-center justify-between flex-row-reverse">
-                    <div className="text-right">
-                      <span className="text-[11px] text-gray-400 block font-medium">سعر البيع المعتمد للصنف:</span>
-                      <div className="flex items-baseline gap-1 mt-0.5">
-                        <span className="text-2xl font-black text-emerald-400 font-mono">
-                          {currentPriceVal.toFixed(2)}
-                        </span>
-                        <span className="text-xs text-emerald-500 font-bold">ج.م / {produceUnit}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-left flex flex-col items-start gap-1">
-                      <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 font-semibold border border-emerald-500/20 flex items-center gap-1">
-                        <Lock className="w-3 h-3 text-emerald-400" />
-                        <span>سعر معتمد من الإدارة</span>
-                      </span>
-                      {currentCostVal > 0 && (
-                        <span className="text-[10px] text-gray-500 font-mono">
-                          التكلفة: {currentCostVal.toFixed(2)} ج.م
-                        </span>
-                      )}
                     </div>
                   </div>
 
@@ -1909,7 +2179,7 @@ export default function POSPage() {
                     </div>
                   )}
 
-                  {/* 3. Quantity / Weight Input + Quick Chips */}
+                  {/* 5. Quantity / Weight Input + Quick Chips */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-xs font-bold text-gray-300">
@@ -2003,7 +2273,7 @@ export default function POSPage() {
                         </>
                       ) : (
                         <>
-                          {['1', '2', '3', '4', '5', '6', '10', '12'].map((num) => (
+                          {['1', '2', '3', '4', '5', '6', '8', '10', '12'].map((num) => (
                             <button
                               key={num}
                               type="button"
@@ -2022,12 +2292,12 @@ export default function POSPage() {
                     </div>
                   </div>
 
-                  {/* 4. Total Calculation Summary Card */}
-                  <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl flex items-center justify-between flex-row-reverse">
+                  {/* 6. Total Calculation Summary Card with Real Profit Breakdown */}
+                  <div className="p-3.5 bg-gradient-to-r from-emerald-950/60 via-slate-900/90 to-emerald-950/60 border border-emerald-500/40 rounded-2xl flex items-center justify-between flex-row-reverse">
                     <div className="text-right">
-                      <span className="text-[11px] text-gray-300 block">إجمالي سعر الصنف للزبون:</span>
+                      <span className="text-[11px] text-gray-300 block font-medium">إجمالي سعر الصنف للزبون:</span>
                       <div className="flex items-baseline gap-1 mt-0.5">
-                        <span className="text-xl font-black text-emerald-300 font-mono">
+                        <span className="text-2xl font-black text-emerald-300 font-mono">
                           {totalItemPrice.toFixed(2)}
                         </span>
                         <span className="text-xs text-emerald-400 font-bold">جنيه</span>
@@ -2035,19 +2305,25 @@ export default function POSPage() {
                     </div>
 
                     <div className="text-left text-xs text-gray-300 font-mono">
-                      <div className="text-gray-400 text-[11px]">
+                      <div className="text-gray-300 text-[11px] font-bold">
                         {currentQtyVal} {produceUnit} × {currentPriceVal.toFixed(2)} ج
                       </div>
                       {currentCostVal > 0 && (
-                        <div className="text-yellow-400 text-[10px] mt-0.5">
-                          إجمالي الربح: {totalProfit.toFixed(2)} ج ({produceMargin}%)
+                        <div className="text-emerald-400 text-xs font-black mt-1 flex items-center gap-1">
+                          <span>صافي المكسب:</span>
+                          <span className="bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-300 font-mono">
+                            +{totalProfit.toFixed(2)} ج.م
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-normal">
+                            (شراء: {(currentCostVal * currentQtyVal).toFixed(2)} ج)
+                          </span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* 6. Action Buttons */}
-                  <div className="grid grid-cols-2 gap-3 pt-2">
+                  {/* 7. Action Buttons */}
+                  <div className="grid grid-cols-2 gap-3 pt-1">
                     <button
                       type="button"
                       onClick={() => {
