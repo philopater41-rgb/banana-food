@@ -17,23 +17,67 @@ export async function GET() {
     });
 
     const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    // Fetch today's sales items
-    const todayOrderItems = await prisma.salesOrderItem.findMany({
+    const cairoDateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+
+    const getBusinessDateStr = (date: Date) => {
+      const parts = Object.fromEntries(
+        cairoDateParts
+          .formatToParts(date)
+          .filter((part) => part.type !== 'literal')
+          .map((part) => [part.type, part.value])
+      );
+      return `${parts.year}-${parts.month}-${parts.day}`;
+    };
+
+    const todayStr = getBusinessDateStr(now);
+
+    const activeShift = await prisma.shift.findFirst({
+      where: { closedAt: null },
+    });
+
+    // Fetch orders to calculate true sold quantities, actual charged revenues, and discounts
+    const orders = await prisma.salesOrder.findMany({
       where: {
-        order: {
-          createdAt: { gte: startOfToday },
-          status: 'COMPLETED',
-        },
+        status: { in: ['COMPLETED', 'REFUNDED'] },
+      },
+      include: {
+        shift: { select: { openedAt: true } },
+        items: true,
       },
     });
 
-    // Group today's sold quantities
+    const todayOrders = orders.filter((order) => {
+      const opDate = order.shift?.openedAt || order.createdAt;
+      const dayKey = getBusinessDateStr(opDate);
+      return dayKey === todayStr || (activeShift && order.shiftId === activeShift.id);
+    });
+
+    // Group today's sold quantities and actual charged revenues
     const todaySoldMap = new Map<string, number>();
-    for (const oi of todayOrderItems) {
-      const current = todaySoldMap.get(oi.itemId) || 0;
-      todaySoldMap.set(oi.itemId, current + oi.qty);
+    const todayRevenueMap = new Map<string, number>();
+    let todayDiscounts = 0;
+
+    for (const order of todayOrders) {
+      const orderReturnedAmt = order.returnedAmount || 0;
+      const isFullyRefunded = order.status === 'REFUNDED' || (orderReturnedAmt >= order.total && order.total > 0);
+      if (isFullyRefunded) continue;
+
+      const orderNet = Math.max(0, order.total - orderReturnedAmt);
+      const netRatio = order.total > 0 ? orderNet / order.total : 1;
+      todayDiscounts += (order.discount || 0) * netRatio;
+
+      for (const oi of order.items) {
+        const netQty = oi.qty * netRatio;
+        const netRevenue = oi.totalPrice * netRatio;
+        todaySoldMap.set(oi.itemId, (todaySoldMap.get(oi.itemId) || 0) + netQty);
+        todayRevenueMap.set(oi.itemId, (todayRevenueMap.get(oi.itemId) || 0) + netRevenue);
+      }
     }
 
     const calculatedItems = items.map((item) => {
@@ -61,9 +105,9 @@ export async function GET() {
       const profitPerUnit = item.price - totalUnitCost;
       const profitMarginPct = totalUnitCost > 0 ? (profitPerUnit / totalUnitCost) * 100 : 0;
       const qtySoldToday = todaySoldMap.get(item.id) || 0;
-      const totalRevenueToday = qtySoldToday * item.price;
+      const totalRevenueToday = todayRevenueMap.get(item.id) || 0;
       const totalCostToday = qtySoldToday * totalUnitCost;
-      const totalProfitToday = qtySoldToday * profitPerUnit;
+      const totalProfitToday = Math.max(0, totalRevenueToday - totalCostToday);
 
       const stock = (item as any).stockQty ?? 0;
       const minStock = (item as any).minStockLevel ?? 0;
@@ -105,12 +149,13 @@ export async function GET() {
     }, 0);
 
     const totalInventoryExpectedProfit = Math.max(0, totalInventoryRetailValue - totalInventoryCostValue);
+    const totalItemsProfit = calculatedItems.reduce((sum, it) => sum + it.totalProfitToday, 0);
+    const netTodayProfit = Math.max(0, totalItemsProfit - todayDiscounts);
 
     return NextResponse.json({
       items: calculatedItems,
-      totalTodayProfit: Number(
-        calculatedItems.reduce((sum, it) => sum + it.totalProfitToday, 0).toFixed(2)
-      ),
+      todayDiscounts: Number(todayDiscounts.toFixed(2)),
+      totalTodayProfit: Number(netTodayProfit.toFixed(2)),
       totalTodayCost: Number(
         calculatedItems.reduce((sum, it) => sum + it.totalCostToday, 0).toFixed(2)
       ),
