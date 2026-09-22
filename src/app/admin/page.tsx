@@ -180,6 +180,7 @@ export default function AdminPage() {
 
   // 4. Returns Log State
   const [returnsLog, setReturnsLog] = useState<any[]>([]);
+  const [deletingReturnId, setDeletingReturnId] = useState<string | null>(null);
 
   // 5. Product Costs & Profitability State
   const [productCosts, setProductCosts] = useState<ProductCostItem[]>([]);
@@ -1172,6 +1173,31 @@ export default function AdminPage() {
       }
     } catch {
       triggerAlert('error', 'خطأ في حذف المصروف');
+    }
+  };
+
+  const handleDeleteReturn = async (id: string, receiptNum: string, refundAmount: number) => {
+    if (
+      !confirm(
+        `هل أنت متأكد من حذف حركة المرتجع للفاتورة (${receiptNum}) بمبلغ (${refundAmount.toFixed(2)} ج)؟\nسيتم استعادة حالة الفاتورة الأصلية وإلغاء خصم المرتجع من الحسابات.`
+      )
+    ) {
+      return;
+    }
+    setDeletingReturnId(id);
+    try {
+      const res = await fetch(`/api/returns?id=${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerAlert('success', data.message || 'تم حذف المرتجع واستعادة الفاتورة بنجاح');
+        fetchAnalytics();
+      } else {
+        triggerAlert('error', data.error || 'فشل حذف المرتجع');
+      }
+    } catch {
+      triggerAlert('error', 'خطأ أثناء حذف المرتجع');
+    } finally {
+      setDeletingReturnId(null);
     }
   };
 
@@ -2583,6 +2609,7 @@ export default function AdminPage() {
                         <th className="p-3">سبب الإرجاع</th>
                         <th className="p-3">إعادة الخامات</th>
                         <th className="p-3 text-center">الفاتورة الأصلية</th>
+                        <th className="p-3 text-center">إجراءات</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -2638,12 +2665,24 @@ export default function AdminPage() {
                                   <span>عرض الفاتورة</span>
                                 </button>
                               </td>
+                              <td className="p-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteReturn(ret.id, receiptNum, refund)}
+                                  disabled={deletingReturnId === ret.id}
+                                  className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                                  title="حذف المرتجع واستعادة الفاتورة الأصلية"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>{deletingReturnId === ret.id ? 'جاري الحذف...' : 'حذف'}</span>
+                                </button>
+                              </td>
                             </tr>
                           );
                         })
                       ) : (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center text-gray-500">
+                          <td colSpan={8} className="p-8 text-center text-gray-500">
                             لا توجد مرتجعات مسجلة حتى الآن
                           </td>
                         </tr>

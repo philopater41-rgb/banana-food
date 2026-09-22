@@ -182,3 +182,154 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message || 'Failed to process return' }, { status: 500 });
   }
 }
+
+// DELETE: Delete an order return record and revert order status
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    let returnId = searchParams.get('id');
+    if (!returnId) {
+      try {
+        const body = await request.json();
+        returnId = body?.id;
+      } catch {}
+    }
+
+    if (!returnId) {
+      return NextResponse.json({ error: 'معرف المرتجع مطلوب' }, { status: 400 });
+    }
+
+    const orderReturn = await prisma.orderReturn.findUnique({
+      where: { id: returnId },
+      include: {
+        items: true,
+        order: true,
+      },
+    });
+
+    if (!orderReturn) {
+      return NextResponse.json({ error: 'سجل المرتجع غير موجود' }, { status: 404 });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Revert SalesOrder returnedAmount and status
+      if (orderReturn.orderId) {
+        const order = await tx.salesOrder.findUnique({
+          where: { id: orderReturn.orderId },
+        });
+
+        if (order) {
+          const newReturnedAmount = Math.max(0, (order.returnedAmount || 0) - orderReturn.totalRefund);
+
+          // Check if there are other returns for this order
+          const remainingReturns = await tx.orderReturn.findMany({
+            where: {
+              orderId: orderReturn.orderId,
+              id: { not: orderReturn.id },
+            },
+          });
+
+          let newStatus = order.status;
+          let newReturnStatus = order.returnStatus;
+          let newReturnReason = order.returnReason;
+
+          if (remainingReturns.length === 0) {
+            newReturnStatus = 'NONE';
+            newReturnReason = null;
+            if (order.status === 'REFUNDED') {
+              newStatus = 'COMPLETED';
+            }
+          } else {
+            newReturnStatus = newReturnedAmount >= order.total ? 'FULL' : (newReturnedAmount > 0 ? 'PARTIAL' : 'NONE');
+            if (newReturnedAmount < order.total && order.status === 'REFUNDED') {
+              newStatus = 'COMPLETED';
+            }
+          }
+
+          await tx.salesOrder.update({
+            where: { id: orderReturn.orderId },
+            data: {
+              returnedAmount: newReturnedAmount,
+              returnStatus: newReturnStatus,
+              returnReason: newReturnReason,
+              status: newStatus,
+            },
+          });
+        }
+      }
+
+      // 2. If items were restocked, reverse the stock adjustment (deduct back)
+      if (orderReturn.restocked && orderReturn.items && orderReturn.items.length > 0) {
+        for (const retItem of orderReturn.items) {
+          if (retItem.itemId && Number(retItem.quantity) > 0) {
+            try {
+              await tx.item.update({
+                where: { id: retItem.itemId },
+                data: {
+                  stockQty: { decrement: Number(retItem.quantity) },
+                },
+              });
+            } catch (itemErr) {
+              console.warn(`Could not decrement Item.stockQty for returned item ${retItem.itemId}:`, itemErr);
+            }
+          }
+
+          const recipeIngredients = await tx.recipe.findMany({
+            where: { itemId: retItem.itemId },
+          });
+
+          for (const ing of recipeIngredients) {
+            const deductBack = ing.quantity * Number(retItem.quantity || 1);
+            await tx.rawMaterial.update({
+              where: { id: ing.rawMaterialId },
+              data: {
+                stockQty: { decrement: deductBack },
+              },
+            }).catch((ingErr) => console.warn('Failed to revert raw material stock:', ingErr));
+          }
+        }
+      }
+
+      // 3. Delete matching CashTransaction (refund payout) and restore shift expectedCash
+      const receiptRef = orderReturn.order?.receiptNumber || orderReturn.orderId;
+      const matchingTx = await tx.cashTransaction.findFirst({
+        where: {
+          shiftId: orderReturn.shiftId,
+          amount: orderReturn.totalRefund,
+          OR: [
+            { type: 'REFUND_PAYOUT' },
+            { reason: { contains: receiptRef } },
+            { reason: { startsWith: 'مرتجع' } },
+          ],
+        },
+      });
+
+      if (matchingTx) {
+        await tx.cashTransaction.delete({
+          where: { id: matchingTx.id },
+        });
+
+        await tx.shift.update({
+          where: { id: orderReturn.shiftId },
+          data: {
+            expectedCash: { increment: orderReturn.totalRefund },
+          },
+        }).catch((err) => console.warn('Failed to restore shift expectedCash:', err));
+      }
+
+      // 4. Delete the OrderReturn (OrderReturnItem rows are cascade-deleted by foreign key)
+      await tx.orderReturn.delete({
+        where: { id: returnId },
+      });
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: 'تم حذف المرتجع واستعادة حالة الفاتورة بنجاح',
+    });
+  } catch (error: any) {
+    console.error('DELETE return error:', error);
+    return NextResponse.json({ error: error.message || 'فشل حذف المرتجع' }, { status: 500 });
+  }
+}
+
