@@ -320,11 +320,53 @@ export async function GET() {
       take: 30,
       include: {
         user: { select: { name: true } },
-        orders: { select: { status: true, total: true, returnedAmount: true, paymentMethod: true } },
+        orders: { select: { status: true, total: true, returnedAmount: true, paymentMethod: true, cashOutAmount: true } },
+        transactions: true,
       },
     });
     const shiftSummaries = shifts.map((shift) => {
       const shiftCompletedOrders = shift.orders.filter((order) => order.status === 'COMPLETED' || order.status === 'REFUNDED');
+      
+      let liveExpectedCash = shift.expectedCash;
+      let liveExpectedInstaPay = shift.expectedInstaPay;
+      let liveExpectedVisa = shift.expectedVisa;
+
+      if (!shift.closedAt) {
+        let salesCash = 0;
+        let salesInstaPay = 0;
+        let salesVisa = 0;
+        let salesCashOut = 0;
+        let visaCashOutReceived = 0;
+
+        for (const order of shift.orders) {
+          if (order.status === 'CANCELLED') continue;
+          if (order.paymentMethod === 'CASH') {
+            salesCash += order.total;
+          } else if (order.paymentMethod === 'INSTAPAY') {
+            salesInstaPay += order.total;
+          } else if (order.paymentMethod === 'VISA') {
+            salesVisa += order.total;
+          } else if (order.paymentMethod === 'CASH_OUT') {
+            const handedCash = order.cashOutAmount || order.total;
+            salesCashOut += handedCash;
+            visaCashOutReceived += order.total;
+          }
+        }
+
+        let cashTxImpact = 0;
+        for (const tx of shift.transactions || []) {
+          if (tx.type === 'PAYIN') {
+            cashTxImpact += tx.amount;
+          } else if (tx.type === 'PAYOUT' || tx.type === 'REFUND_PAYOUT') {
+            cashTxImpact -= tx.amount;
+          }
+        }
+
+        liveExpectedCash = Math.max(0, (shift.floatCash || 0) + salesCash - salesCashOut + cashTxImpact);
+        liveExpectedInstaPay = salesInstaPay;
+        liveExpectedVisa = salesVisa + visaCashOutReceived;
+      }
+
       return {
         id: shift.id,
         openedAt: shift.openedAt,
@@ -336,9 +378,9 @@ export async function GET() {
         visaSales: shiftCompletedOrders.filter((order) => order.paymentMethod === 'VISA').reduce((sum, order) => sum + (order.total - (order.returnedAmount || 0)), 0),
         instaPaySales: shiftCompletedOrders.filter((order) => order.paymentMethod === 'INSTAPAY').reduce((sum, order) => sum + (order.total - (order.returnedAmount || 0)), 0),
         vodafoneCashSales: shiftCompletedOrders.filter((order) => order.paymentMethod === 'VODAFONE_CASH').reduce((sum, order) => sum + (order.total - (order.returnedAmount || 0)), 0),
-        expectedCash: shift.expectedCash,
-        expectedInstaPay: shift.expectedInstaPay,
-        expectedVisa: shift.expectedVisa,
+        expectedCash: Number(liveExpectedCash.toFixed(2)),
+        expectedInstaPay: Number(liveExpectedInstaPay.toFixed(2)),
+        expectedVisa: Number(liveExpectedVisa.toFixed(2)),
         closedCash: shift.closedCash,
         closedInstaPay: shift.closedInstaPay,
         closedVisa: shift.closedVisa,
@@ -346,6 +388,8 @@ export async function GET() {
         varianceInstaPay: shift.varianceInstaPay,
       };
     });
+
+    const activeShiftSummary = activeShift ? shiftSummaries.find((s) => s.id === activeShift.id) : null;
 
     return NextResponse.json({
       kpis: {
@@ -367,7 +411,7 @@ export async function GET() {
         todayNet: Number(todayNet.toFixed(2)),
         monthlyNet: Number(monthlyNet.toFixed(2)),
         activeShiftUser: activeShift ? (activeShift.cashierName || activeShift.user.name) : 'لا توجد وردية مفتوحة',
-        activeShiftExpected: activeShift ? activeShift.expectedCash : 0,
+        activeShiftExpected: activeShiftSummary ? activeShiftSummary.expectedCash : 0,
       },
       paymentBreakdown: paymentBreakdownToday,
       discountsBreakdown: Object.entries(discountsByReason).map(([reason, stats]) => ({
