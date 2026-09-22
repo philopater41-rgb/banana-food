@@ -70,164 +70,182 @@ export async function POST(request: Request) {
         }
 
         // 2. Wrap order insertion and stock deduction in a Prisma transaction
-        await prisma.$transaction(async (tx) => {
-          // Resolve any duplicate receipt number collision safely
-          let finalReceiptNumber = order.receiptNumber;
-          if (finalReceiptNumber) {
-            const existingReceipt = await tx.salesOrder.findUnique({
-              where: { receiptNumber: finalReceiptNumber },
-            });
-            if (existingReceipt && existingReceipt.id !== order.id) {
-              finalReceiptNumber = `${finalReceiptNumber}-${order.id.slice(0, 4).toUpperCase()}`;
-            }
-          }
-
-          // 2a. Validate and sanitize foreign keys to prevent P2003 constraints
-          let finalShiftId = order.shiftId;
-          const shiftExists = await tx.shift.findUnique({ where: { id: finalShiftId } });
-          if (!shiftExists) {
-            const fallbackShift = await tx.shift.findFirst({ orderBy: { openedAt: 'desc' } });
-            if (fallbackShift) {
-              finalShiftId = fallbackShift.id;
-            } else {
-              const anyUser = await tx.user.findFirst();
-              if (anyUser) {
-                const newShift = await tx.shift.create({
-                  data: {
-                    userId: anyUser.id,
-                    cashierName: anyUser.name,
-                    floatCash: 0,
-                    openedAt: new Date(),
-                  },
-                });
-                finalShiftId = newShift.id;
-              }
-            }
-          }
-
-          let finalTableId = order.tableId || null;
-          if (finalTableId) {
-            const tableExists = await tx.table.findUnique({ where: { id: finalTableId } });
-            if (!tableExists) finalTableId = null;
-          }
-
-          let finalCustomerId = order.customerId || null;
-          if (finalCustomerId) {
-            const customerExists = await tx.customer.findUnique({ where: { id: finalCustomerId } });
-            if (!customerExists) finalCustomerId = null;
-          }
-
-          // 2b. Sanitize items and modifiers
-          const sanitizedItems = [];
-          for (const item of order.items || []) {
-            let validItemId = item.itemId;
-            const itemExists = await tx.item.findUnique({ where: { id: validItemId } });
-            if (!itemExists) {
-              const fallbackItem = await tx.item.findFirst();
-              if (!fallbackItem) continue;
-              validItemId = fallbackItem.id;
-            }
-
-            const validModifiers = [];
-            for (const mod of item.modifiers || []) {
-              const modExists = await tx.modifier.findUnique({ where: { id: mod.modifierId } });
-              if (modExists) {
-                validModifiers.push({
-                  modifierId: mod.modifierId,
-                  unitPriceImpact: mod.unitPriceImpact,
-                });
+        await prisma.$transaction(
+          async (tx) => {
+            // Resolve any duplicate receipt number collision safely
+            let finalReceiptNumber = order.receiptNumber;
+            if (finalReceiptNumber) {
+              const existingReceipt = await tx.salesOrder.findUnique({
+                where: { receiptNumber: finalReceiptNumber },
+              });
+              if (existingReceipt && existingReceipt.id !== order.id) {
+                finalReceiptNumber = `${finalReceiptNumber}-${order.id.slice(0, 4).toUpperCase()}`;
               }
             }
 
-            sanitizedItems.push({
-              id: item.id,
-              itemId: validItemId,
-              qty: item.qty,
-              unit: (item as any).unit || 'كيلو',
-              unitPrice: item.unitPrice,
-              totalPrice: item.totalPrice,
-              comment: item.comment?.trim() || null,
-              modifiers: {
-                create: validModifiers,
-              },
-            });
-          }
-
-          // Create the sales order
-          await tx.salesOrder.create({
-            data: {
-              id: order.id,
-              receiptNumber: finalReceiptNumber,
-              shiftId: finalShiftId,
-              tableId: finalTableId,
-              customerId: finalCustomerId,
-              customerName: order.customerName || null,
-              orderType: order.orderType,
-              paymentMethod,
-              cashOutAmount: order.cashOutAmount || 0,
-              cashOutFee: order.cashOutFee || 0,
-              status: order.status,
-              subtotal: order.subtotal,
-              discount: order.discount,
-              discountReason: order.discountReason || null,
-              tax: order.tax,
-              total: order.total,
-              returnStatus: order.returnStatus || 'NONE',
-              returnedAmount: order.returnedAmount || 0,
-              returnReason: order.returnReason || null,
-              createdAt: new Date(order.createdAt),
-              items: {
-                create: sanitizedItems,
-              },
-            },
-          });
-
-          // Only perform inventory deduction if order is COMPLETED
-          if (order.status === 'COMPLETED') {
-            for (const item of sanitizedItems) {
-              // 1. Direct item stock deduction for Banana Food produce inventory
-              if (item.itemId && item.qty > 0) {
-                try {
-                  await tx.item.update({
-                    where: { id: item.itemId },
+            // 2a. Validate and sanitize foreign keys to prevent P2003 constraints
+            let finalShiftId = order.shiftId;
+            const shiftExists = await tx.shift.findUnique({ where: { id: finalShiftId } });
+            if (!shiftExists) {
+              const fallbackShift = await tx.shift.findFirst({ orderBy: { openedAt: 'desc' } });
+              if (fallbackShift) {
+                finalShiftId = fallbackShift.id;
+              } else {
+                const anyUser = await tx.user.findFirst();
+                if (anyUser) {
+                  const newShift = await tx.shift.create({
                     data: {
-                      stockQty: {
-                        decrement: item.qty,
-                      },
+                      userId: anyUser.id,
+                      cashierName: anyUser.name,
+                      floatCash: 0,
+                      openedAt: new Date(),
                     },
                   });
-                } catch (stockErr) {
-                  console.warn(`Could not decrement Item.stockQty for item ${item.itemId}:`, stockErr);
+                  finalShiftId = newShift.id;
+                }
+              }
+            }
+
+            let finalTableId = order.tableId || null;
+            if (finalTableId) {
+              const tableExists = await tx.table.findUnique({ where: { id: finalTableId } });
+              if (!tableExists) finalTableId = null;
+            }
+
+            let finalCustomerId = order.customerId || null;
+            if (finalCustomerId) {
+              const customerExists = await tx.customer.findUnique({ where: { id: finalCustomerId } });
+              if (!customerExists) finalCustomerId = null;
+            }
+
+            // Batch query all items in one single query to eliminate N+1 latency
+            const rawItemIds = (order.items || [])
+              .map((i: any) => i.itemId)
+              .filter(Boolean);
+            const existingDbItems = await tx.item.findMany({
+              where: { id: { in: rawItemIds } },
+            });
+            const itemMap = new Map(existingDbItems.map((it) => [it.id, it]));
+            const fallbackDefaultItem = existingDbItems[0] || (await tx.item.findFirst());
+
+            // Batch query all modifiers in one single query
+            const rawModIds: string[] = [];
+            for (const item of order.items || []) {
+              for (const mod of item.modifiers || []) {
+                if (mod.modifierId) rawModIds.push(mod.modifierId);
+              }
+            }
+            const existingDbMods = rawModIds.length > 0
+              ? await tx.modifier.findMany({ where: { id: { in: rawModIds } } })
+              : [];
+            const modMap = new Map(existingDbMods.map((m) => [m.id, m]));
+
+            // 2b. Sanitize items and modifiers
+            const sanitizedItems = [];
+            const usedItemIds = new Set<string>();
+
+            for (const item of order.items || []) {
+              let validItemId = item.itemId;
+              if (!itemMap.has(validItemId)) {
+                if (!fallbackDefaultItem) continue;
+                validItemId = fallbackDefaultItem.id;
+              }
+
+              const validModifiers = [];
+              for (const mod of item.modifiers || []) {
+                if (modMap.has(mod.modifierId)) {
+                  validModifiers.push({
+                    modifierId: mod.modifierId,
+                    unitPriceImpact: Number(mod.unitPriceImpact) || 0,
+                  });
                 }
               }
 
-              // 2. Deduct recipe ingredients for the item (if recipe is defined)
-              const recipeIngredients = await tx.recipe.findMany({
-                where: { itemId: item.itemId },
+              // Ensure unique and valid ID for each sales order item
+              let orderItemId = item.id;
+              if (!orderItemId || usedItemIds.has(orderItemId)) {
+                orderItemId = crypto.randomUUID();
+              }
+              usedItemIds.add(orderItemId);
+
+              const validQty = Math.max(0.001, Number(item.qty) || 1);
+              const validUnitPrice = Number(item.unitPrice) || 0;
+              const validTotalPrice = Number(item.totalPrice) || Math.round(validQty * validUnitPrice * 100) / 100;
+
+              sanitizedItems.push({
+                id: orderItemId,
+                itemId: validItemId,
+                qty: validQty,
+                unit: (item as any).unit || 'كيلو',
+                unitPrice: validUnitPrice,
+                totalPrice: validTotalPrice,
+                comment: item.comment?.trim() || null,
+                modifiers: {
+                  create: validModifiers,
+                },
+              });
+            }
+
+            // Create the sales order
+            await tx.salesOrder.create({
+              data: {
+                id: order.id,
+                receiptNumber: finalReceiptNumber,
+                shiftId: finalShiftId,
+                tableId: finalTableId,
+                customerId: finalCustomerId,
+                customerName: order.customerName || null,
+                orderType: order.orderType,
+                paymentMethod,
+                cashOutAmount: Number(order.cashOutAmount) || 0,
+                cashOutFee: Number(order.cashOutFee) || 0,
+                status: order.status,
+                subtotal: Number(order.subtotal) || 0,
+                discount: Number(order.discount) || 0,
+                discountReason: order.discountReason || null,
+                tax: Number(order.tax) || 0,
+                total: Number(order.total) || 0,
+                returnStatus: order.returnStatus || 'NONE',
+                returnedAmount: Number(order.returnedAmount) || 0,
+                returnReason: order.returnReason || null,
+                createdAt: new Date(order.createdAt),
+                items: {
+                  create: sanitizedItems,
+                },
+              },
+            });
+
+            // Only perform inventory deduction if order is COMPLETED
+            if (order.status === 'COMPLETED') {
+              const validSanitizedItemIds = sanitizedItems.map((i) => i.itemId);
+
+              // Batch query recipes for all items in 1 query
+              const allRecipes = await tx.recipe.findMany({
+                where: { itemId: { in: validSanitizedItemIds } },
               });
 
-              for (const ing of recipeIngredients) {
-                const totalDeduct = ing.quantity * item.qty;
-                await tx.rawMaterial.update({
-                  where: { id: ing.rawMaterialId },
-                  data: {
-                    stockQty: {
-                      decrement: totalDeduct,
-                    },
-                  },
-                });
-              }
+              for (const item of sanitizedItems) {
+                // 1. Direct item stock deduction
+                if (item.itemId && item.qty > 0) {
+                  try {
+                    await tx.item.update({
+                      where: { id: item.itemId },
+                      data: {
+                        stockQty: {
+                          decrement: item.qty,
+                        },
+                      },
+                    });
+                  } catch (stockErr) {
+                    console.warn(`Could not decrement Item.stockQty for item ${item.itemId}:`, stockErr);
+                  }
+                }
 
-              // 3. Deduct recipes for any modifiers
-              if (item.modifiers) {
-                const modifierList = (item.modifiers as any)?.create || [];
-                for (const mod of modifierList) {
-                  const modIngredients = await tx.recipeModifier.findMany({
-                    where: { modifierId: mod.modifierId },
-                  });
-
-                  for (const ing of modIngredients) {
-                    const totalDeduct = ing.quantity * item.qty; // Deducted per item quantity
+                // 2. Deduct recipe ingredients safely
+                const itemRecipes = allRecipes.filter((r) => r.itemId === item.itemId);
+                for (const ing of itemRecipes) {
+                  try {
+                    const totalDeduct = ing.quantity * item.qty;
                     await tx.rawMaterial.update({
                       where: { id: ing.rawMaterialId },
                       data: {
@@ -236,20 +254,28 @@ export async function POST(request: Request) {
                         },
                       },
                     });
+                  } catch (rawErr) {
+                    console.warn(`Could not decrement raw material ${ing.rawMaterialId}:`, rawErr);
                   }
                 }
               }
             }
-          }
 
-          // Update Table status to VACANT if it was Dine-In and completed
-          if (order.orderType === 'DINE_IN' && finalTableId && order.status === 'COMPLETED') {
-            await tx.table.update({
-              where: { id: finalTableId },
-              data: { status: 'VACANT' },
-            });
+            // Update Table status to VACANT if it was Dine-In and completed
+            if (order.orderType === 'DINE_IN' && finalTableId && order.status === 'COMPLETED') {
+              try {
+                await tx.table.update({
+                  where: { id: finalTableId },
+                  data: { status: 'VACANT' },
+                });
+              } catch {}
+            }
+          },
+          {
+            maxWait: 15000,
+            timeout: 60000, // 60 seconds to prevent timeout across international latency
           }
-        });
+        );
 
         syncedIds.push(order.id);
       } catch (err: any) {

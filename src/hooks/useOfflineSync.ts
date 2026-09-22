@@ -98,7 +98,9 @@ export function useOfflineSync() {
         for (const id of syncedIds) {
           await offlineDB.salesOrders.update(id, { syncStatus: 'SYNCED' });
         }
-        console.log(`Successfully synced ${syncedIds.length} orders`);
+        if (data.errors && data.errors.length > 0) {
+          console.warn('Some orders failed to sync:', data.errors);
+        }
       } else {
         console.error('Batch sync endpoint failed:', data.error);
       }
