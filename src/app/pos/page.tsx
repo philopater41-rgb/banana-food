@@ -1303,11 +1303,11 @@ export default function POSPage() {
                 <div className="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 rounded-xl p-1 text-xs shadow-inner shrink-0">
                   <div className="flex items-center gap-1 text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20" title="الكاش المتوقع في الدرج">
                     <span className="text-[10px] text-emerald-300/80 font-normal">كاش الدرج:</span>
-                    <span className="font-mono font-bold">{(activeShift.expectedCash || 0).toFixed(0)} ج</span>
+                    <span className="font-mono font-bold">{(activeShift.expectedCash || 0).toFixed(2)} ج</span>
                   </div>
                   <div className="flex items-center gap-1 text-purple-400 font-bold bg-purple-500/10 px-2 py-1 rounded-lg border border-purple-500/20" title="إنستا باي">
                     <span className="text-[10px] text-purple-300/80 font-normal">إنستا باي:</span>
-                    <span className="font-mono font-bold">{(activeShift.expectedInstaPay || 0).toFixed(0)} ج</span>
+                    <span className="font-mono font-bold">{(activeShift.expectedInstaPay || 0).toFixed(2)} ج</span>
                   </div>
                 </div>
 
@@ -2335,7 +2335,7 @@ export default function POSPage() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-gray-300">الكاش الفعلي اللي عديته في الدرج</label>
-                      <span className="text-[10px] text-emerald-400 font-mono font-semibold">{(activeShift?.expectedCash || 0).toFixed(0)} ج</span>
+                      <span className="text-[10px] text-emerald-400 font-mono font-semibold">{(activeShift?.expectedCash || 0).toFixed(2)} ج</span>
                     </div>
                     <input 
                       type="number" 
@@ -2350,7 +2350,7 @@ export default function POSPage() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-gray-300">مجموع إنستا باي الفعلي ع التليفون</label>
-                      <span className="text-[10px] text-purple-400 font-mono font-semibold">{(activeShift?.expectedInstaPay || 0).toFixed(0)} ج</span>
+                      <span className="text-[10px] text-purple-400 font-mono font-semibold">{(activeShift?.expectedInstaPay || 0).toFixed(2)} ج</span>
                     </div>
                     <input 
                       type="number" 

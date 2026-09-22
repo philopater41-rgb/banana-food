@@ -110,9 +110,9 @@ export async function GET(request: Request) {
           if (itemId && oi.itemId !== itemId) continue;
           if (search && !oi.item.name.toLowerCase().includes(search)) continue;
 
-          // Calculate unit cost from recipe
+          // Calculate unit cost from recipe or fallback to direct item cost
           let unitCost = 0;
-          if (oi.item.recipe) {
+          if (oi.item.recipe && oi.item.recipe.length > 0) {
             for (const r of oi.item.recipe) {
               const costPerDeduct =
                 r.rawMaterial.conversionFactor > 0
@@ -120,6 +120,9 @@ export async function GET(request: Request) {
                   : 0;
               unitCost += r.quantity * costPerDeduct;
             }
+          }
+          if (unitCost <= 0 && oi.item && typeof (oi.item as any).cost === 'number' && (oi.item as any).cost > 0) {
+            unitCost = (oi.item as any).cost;
           }
 
           const itemTotalRevenue = oi.totalPrice;
