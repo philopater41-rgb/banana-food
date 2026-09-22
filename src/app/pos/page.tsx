@@ -627,6 +627,9 @@ export default function POSPage() {
   const handleSelectChannel = (channel: 'DIRECT' | 'TALABAT' | 'TRAY' | 'CUSTOM') => {
     setProduceChannel(channel);
     if (channel === 'DIRECT') {
+      if (selectedProduceItem?.price) {
+        setProducePrice(selectedProduceItem.price.toString());
+      }
       if (produceNote === 'طلبات' || produceNote === 'طبق مجهز' || produceNote.startsWith('طبق')) {
         setProduceNote('');
       }
@@ -638,7 +641,6 @@ export default function POSPage() {
         setProduceNote('طلبات');
       }
     } else if (channel === 'TRAY') {
-      setProduceUnit('طبق');
       if (!produceNote || produceNote === 'طلبات') {
         setProduceNote('طبق مجهز');
       }
@@ -661,11 +663,11 @@ export default function POSPage() {
   const handleConfirmProduceItem = async () => {
     if (!selectedProduceItem) return;
 
-    // Use entered custom price if valid, or fall back to item price
+    // If channel is DIRECT (محل), price is strictly locked to registered item price
     const enteredPrice = parseFloat(producePrice);
-    const priceNum = Number.isFinite(enteredPrice) && enteredPrice > 0 
-      ? enteredPrice 
-      : (selectedProduceItem.price || 0);
+    const priceNum = produceChannel === 'DIRECT'
+      ? (selectedProduceItem.price || 0)
+      : (Number.isFinite(enteredPrice) && enteredPrice > 0 ? enteredPrice : (selectedProduceItem.price || 0));
 
     if (!Number.isFinite(priceNum) || priceNum <= 0) {
       triggerAlert('error', 'سعر البيع غير محدد أو غير صحيح للصنف.');
@@ -1905,12 +1907,12 @@ export default function POSPage() {
                     </div>
                   </div>
 
-                  {/* 2. Prep Detail / Note Input + Quick Chips */}
+                  {/* 2. Prep Detail / Note Input (without suggestions and without "(اختياري)") */}
                   <div>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-1.5">
                       <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                         <Edit3 className="w-3.5 h-3.5 text-gray-400" />
-                        <span>بيان الصنف أو التجهيز (اختياري):</span>
+                        <span>بيان الصنف أو التجهيز:</span>
                       </label>
                       <span className="text-[10px] text-gray-400">ستظهر الملاحظة في الفاتورة والإيصال</span>
                     </div>
@@ -1933,49 +1935,29 @@ export default function POSPage() {
                         </button>
                       )}
                     </div>
-
-                    {/* Quick Prep Chips */}
-                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                      <span className="text-[10px] text-gray-400 shrink-0">مقترحات:</span>
-                      {[
-                        'كوسة متقورة',
-                        'طبق مجهز',
-                        'طلبات',
-                        'جاهز للطبخ',
-                        'تقوير وتنظيف',
-                        'متقطع وجاهز',
-                      ].map((tag) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => {
-                            setProduceNote(tag);
-                            if (tag.includes('طلبات')) {
-                              setProduceChannel('TALABAT');
-                            } else if (tag.includes('طبق') || tag.includes('متقورة')) {
-                              setProduceChannel('TRAY');
-                              setProduceUnit('طبق');
-                            }
-                          }}
-                          className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                            produceNote === tag
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                              : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-white/5'
-                          }`}
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
                   </div>
 
-                  {/* 3. Editable Selling Price with Base Cost & Real Profit Indicator */}
+                  {/* 3. Selling Price: Locked for DIRECT (محل), Editable for other channels */}
                   <div className="p-3 bg-slate-900/95 border border-emerald-500/30 rounded-2xl space-y-2">
                     <div className="flex items-center justify-between flex-row-reverse">
                       <div className="text-right flex-1">
-                        <label className="text-xs font-bold text-gray-200 block mb-1">
-                          سعر البيع ({produceUnit}):
-                        </label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-bold text-gray-200">
+                            سعر البيع ({produceUnit}):
+                          </label>
+                          {produceChannel === 'DIRECT' ? (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-semibold border border-emerald-500/20 flex items-center gap-1">
+                              <Lock className="w-3 h-3 text-emerald-400" />
+                              <span>سعر المحل ثابت (لا يتغير)</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/20 flex items-center gap-1">
+                              <Edit3 className="w-3 h-3 text-amber-400" />
+                              <span>سعر مخصص (قابل للتعديل)</span>
+                            </span>
+                          )}
+                        </div>
+
                         <div className="flex items-center gap-2">
                           <div className="relative flex-1">
                             <input
@@ -1983,9 +1965,21 @@ export default function POSPage() {
                               step="0.5"
                               min="0"
                               value={producePrice}
-                              onChange={(e) => setProducePrice(e.target.value)}
-                              onFocus={(e) => e.target.select()}
-                              className="w-full bg-slate-950 border-2 border-emerald-500/50 focus:border-emerald-400 rounded-xl py-2 px-3 text-xl font-black text-emerald-400 font-mono text-center focus:outline-none"
+                              onChange={(e) => {
+                                if (produceChannel !== 'DIRECT') {
+                                  setProducePrice(e.target.value);
+                                }
+                              }}
+                              readOnly={produceChannel === 'DIRECT'}
+                              disabled={produceChannel === 'DIRECT'}
+                              onFocus={(e) => {
+                                if (produceChannel !== 'DIRECT') e.target.select();
+                              }}
+                              className={`w-full border-2 rounded-xl py-2 px-3 text-xl font-black font-mono text-center focus:outline-none transition-all ${
+                                produceChannel === 'DIRECT'
+                                  ? 'bg-slate-900/60 border-white/10 text-emerald-400/80 cursor-not-allowed select-none'
+                                  : 'bg-slate-950 border-emerald-500/50 focus:border-emerald-400 text-emerald-400'
+                              }`}
                             />
                             <span className="absolute left-3 top-2.5 text-xs text-emerald-500 font-bold">
                               ج.م / {produceUnit}
@@ -1995,49 +1989,56 @@ export default function POSPage() {
                       </div>
                     </div>
 
-                    {/* Quick Price Modifiers & Comparison */}
+                    {/* Bottom Bar: Quick Adjustments for Non-Direct OR Lock Notice for Direct */}
                     <div className="flex items-center justify-between pt-1 border-t border-white/5 flex-row-reverse text-xs flex-wrap gap-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] text-gray-400">تعديل سريع:</span>
-                        <button
-                          type="button"
-                          onClick={() => setProducePrice(baseOriginalPrice.toString())}
-                          className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 text-[11px] font-bold cursor-pointer"
-                          title="استرجاع السعر الأساسي"
-                        >
-                          الأصلي ({baseOriginalPrice}ج)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const cur = parseFloat(producePrice) || baseOriginalPrice;
-                            setProducePrice((cur + 5).toString());
-                          }}
-                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
-                        >
-                          +5 ج
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const cur = parseFloat(producePrice) || baseOriginalPrice;
-                            setProducePrice((cur + 10).toString());
-                          }}
-                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
-                        >
-                          +10 ج
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const cur = parseFloat(producePrice) || baseOriginalPrice;
-                            setProducePrice((cur + 15).toString());
-                          }}
-                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
-                        >
-                          +15 ج
-                        </button>
-                      </div>
+                      {produceChannel !== 'DIRECT' ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] text-gray-400">تعديل سريع:</span>
+                          <button
+                            type="button"
+                            onClick={() => setProducePrice(baseOriginalPrice.toString())}
+                            className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 text-[11px] font-bold cursor-pointer"
+                            title="استرجاع السعر الأساسي"
+                          >
+                            الأصلي ({baseOriginalPrice}ج)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = parseFloat(producePrice) || baseOriginalPrice;
+                              setProducePrice((cur + 5).toString());
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                          >
+                            +5 ج
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = parseFloat(producePrice) || baseOriginalPrice;
+                              setProducePrice((cur + 10).toString());
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                          >
+                            +10 ج
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = parseFloat(producePrice) || baseOriginalPrice;
+                              setProducePrice((cur + 15).toString());
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-bold font-mono cursor-pointer"
+                          >
+                            +15 ج
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-gray-400 flex items-center gap-1">
+                          <Lock className="w-3 h-3 text-emerald-400" />
+                          <span>سعر البيع المعتمد من الإدارة للمحل</span>
+                        </div>
+                      )}
 
                       {/* Live Unit Profit Indicator */}
                       <div className="flex items-center gap-1.5 text-[11px]">
@@ -2054,13 +2055,13 @@ export default function POSPage() {
                     </div>
                   </div>
 
-                  {/* 4. Unit Selector (كيلو / طبق / حزمة / قطعة) */}
+                  {/* 4. Unit Selector (كيلو / حزمة / قطعة) - Removed طبق as requested */}
                   <div>
                     <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
                       <span>الوحدة وطريقة البيع:</span>
                       <span className="text-[11px] font-normal text-emerald-400">اختار طريقة القياس المناسبة</span>
                     </label>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
                         onClick={() => setProduceUnit('كيلو')}
@@ -2072,22 +2073,6 @@ export default function POSPage() {
                       >
                         <Scale className="w-3.5 h-3.5" />
                         <span>كيلو</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProduceUnit('طبق');
-                          if (produceChannel === 'DIRECT') setProduceChannel('TRAY');
-                        }}
-                        className={`py-2 px-2 rounded-2xl border text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          produceUnit === 'طبق'
-                            ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-lg shadow-cyan-500/25 scale-[1.02]'
-                            : 'bg-slate-900/80 border-white/10 text-gray-300 hover:text-white hover:border-white/20'
-                        }`}
-                      >
-                        <Package className="w-3.5 h-3.5" />
-                        <span>طبق</span>
                       </button>
 
                       <button
