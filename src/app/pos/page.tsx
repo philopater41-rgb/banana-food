@@ -192,23 +192,36 @@ export default function POSPage() {
   useEffect(() => {
     setMounted(true);
 
+    const syncActiveShift = () => {
+      fetch('/api/shifts/active')
+        .then((r) => r.json())
+        .then((data) => {
+          if (data?.activeShift) {
+            setActiveShift(data.activeShift);
+          } else {
+            setActiveShift(null);
+          }
+        })
+        .catch(() => {});
+    };
+
     // Check active shift from server on load without auto-opening
-    fetch('/api/shifts/active')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.activeShift) {
-          setActiveShift(data.activeShift);
-        } else {
-          setActiveShift(null);
-        }
-      })
-      .catch(() => {});
+    syncActiveShift();
 
     // Fetch saved cashier names
     fetch('/api/cashier-names')
       .then((r) => r.json())
       .then((data) => setSavedCashierNames(data.cashierNames || []))
       .catch(() => {});
+
+    // Periodic & focus sync for drawer cash live updates
+    const interval = setInterval(syncActiveShift, 15000);
+    window.addEventListener('focus', syncActiveShift);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', syncActiveShift);
+    };
   }, [setActiveShift]);
 
   // Load Cart from Dexie or auto-create direct counter cart

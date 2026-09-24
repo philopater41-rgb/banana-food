@@ -290,31 +290,45 @@ export async function DELETE(request: Request) {
         }
       }
 
-      // 3. Delete matching CashTransaction (refund payout) and restore shift expectedCash
-      const receiptRef = orderReturn.order?.receiptNumber || orderReturn.orderId;
-      const matchingTx = await tx.cashTransaction.findFirst({
-        where: {
-          shiftId: orderReturn.shiftId,
-          amount: orderReturn.totalRefund,
-          OR: [
-            { type: 'REFUND_PAYOUT' },
-            { reason: { contains: receiptRef } },
-            { reason: { startsWith: 'مرتجع' } },
-          ],
-        },
-      });
-
-      if (matchingTx) {
-        await tx.cashTransaction.delete({
-          where: { id: matchingTx.id },
+      // 3. Delete matching CashTransaction (refund payout) and restore shift drawer cash
+      const targetShiftId = orderReturn.shiftId;
+      if (targetShiftId) {
+        const receiptRef = orderReturn.order?.receiptNumber || orderReturn.orderId;
+        const matchingTx = await tx.cashTransaction.findFirst({
+          where: {
+            shiftId: targetShiftId,
+            OR: [
+              { type: 'REFUND_PAYOUT', amount: orderReturn.totalRefund },
+              { reason: { contains: receiptRef || '' } },
+              { type: 'REFUND_PAYOUT' },
+            ],
+          },
         });
 
-        await tx.shift.update({
-          where: { id: orderReturn.shiftId },
-          data: {
-            expectedCash: { increment: orderReturn.totalRefund },
-          },
-        }).catch((err) => console.warn('Failed to restore shift expectedCash:', err));
+        if (matchingTx) {
+          await tx.cashTransaction.delete({
+            where: { id: matchingTx.id },
+          }).catch((err) => console.warn('Failed to delete cash transaction:', err));
+        }
+
+        // Always restore expectedCash to the shift drawer unconditionally
+        const shiftRecord = await tx.shift.findUnique({
+          where: { id: targetShiftId },
+        });
+
+        if (shiftRecord) {
+          const newExpectedCash = (shiftRecord.expectedCash || 0) + orderReturn.totalRefund;
+          const updateData: any = {
+            expectedCash: newExpectedCash,
+          };
+          if (shiftRecord.closedAt && shiftRecord.closedCash !== null) {
+            updateData.varianceCash = (shiftRecord.closedCash || 0) - newExpectedCash;
+          }
+          await tx.shift.update({
+            where: { id: targetShiftId },
+            data: updateData,
+          });
+        }
       }
 
       // 4. Delete the OrderReturn (OrderReturnItem rows are cascade-deleted by foreign key)
@@ -325,7 +339,7 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'تم حذف المرتجع واستعادة حالة الفاتورة بنجاح',
+      message: `تم مسح المرتجع تماماً وإعادة مبلغ (${orderReturn.totalRefund.toFixed(2)} ج) إلى درج الكاشير بنجاح`,
     });
   } catch (error: any) {
     console.error('DELETE return error:', error);

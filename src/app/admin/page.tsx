@@ -1179,7 +1179,7 @@ export default function AdminPage() {
   const handleDeleteReturn = async (id: string, receiptNum: string, refundAmount: number) => {
     if (
       !confirm(
-        `هل أنت متأكد من حذف حركة المرتجع للفاتورة (${receiptNum}) بمبلغ (${refundAmount.toFixed(2)} ج)؟\nسيتم استعادة حالة الفاتورة الأصلية وإلغاء خصم المرتجع من الحسابات.`
+        `هل أنت متأكد من مسح وحذف حركة المرتجع للفاتورة (${receiptNum}) بمبلغ (${refundAmount.toFixed(2)} ج)؟\nسيتم مسح المرتجع نهائياً كأنه لم يكن، وإعادة الفلوس (${refundAmount.toFixed(2)} ج) إلى درج الكاشير.`
       )
     ) {
       return;
@@ -1189,7 +1189,7 @@ export default function AdminPage() {
       const res = await fetch(`/api/returns?id=${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok && data.success) {
-        triggerAlert('success', data.message || 'تم حذف المرتجع واستعادة الفاتورة بنجاح');
+        triggerAlert('success', data.message || `تم مسح المرتجع نهائياً وعادت (${refundAmount.toFixed(2)} ج) إلى الدرج بنجاح`);
         fetchAnalytics();
       } else {
         triggerAlert('error', data.error || 'فشل حذف المرتجع');
@@ -2671,7 +2671,7 @@ export default function AdminPage() {
                                   onClick={() => handleDeleteReturn(ret.id, receiptNum, refund)}
                                   disabled={deletingReturnId === ret.id}
                                   className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-sm cursor-pointer disabled:opacity-50"
-                                  title="حذف المرتجع واستعادة الفاتورة الأصلية"
+                                  title="مسح المرتجع نهائياً وإعادة الفلوس للدرج"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                   <span>{deletingReturnId === ret.id ? 'جاري الحذف...' : 'حذف'}</span>
