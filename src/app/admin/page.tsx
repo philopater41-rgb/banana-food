@@ -5016,8 +5016,8 @@ export default function AdminPage() {
                 هل أنت متأكد من مسح وإلغاء حركة هذا المرتجع بمبلغ <strong className="text-rose-400 font-mono text-sm">{returnToDelete.refundAmount.toFixed(2)} ج</strong>؟
               </p>
               <p className="text-[11px] text-gray-400 leading-relaxed">
-                • سيتم مسح المرتجع من النظام تماماً كأنه لم يحدث.<br />
-                • ستعود الفلوس تلقائياً إلى درج الكاشير.
+                • سيتم مسح المرتجع وإلغاء العملية تماماً كأنها لم تحدث.<br />
+                • لن يتم تحميل الكاشير بأي كاش إضافي وستبقى حسابات الدرج متطابقة ومضبوطة 100%.
               </p>
             </div>
 

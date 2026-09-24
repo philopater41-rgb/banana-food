@@ -212,7 +212,7 @@ export async function DELETE(request: Request) {
     }
 
     await prisma.$transaction(async (tx) => {
-      // 1. Revert SalesOrder returnedAmount and status
+      // 1. Mark SalesOrder as CANCELLED so it does not demand cash or inflate sales, and reset return status
       if (orderReturn.orderId) {
         const order = await tx.salesOrder.findUnique({
           where: { id: orderReturn.orderId },
@@ -236,14 +236,10 @@ export async function DELETE(request: Request) {
           if (remainingReturns.length === 0) {
             newReturnStatus = 'NONE';
             newReturnReason = null;
-            if (order.status === 'REFUNDED') {
-              newStatus = 'COMPLETED';
-            }
+            // Mark the order as CANCELLED so it neither inflates sales nor adds extra expected cash to the cashier
+            newStatus = 'CANCELLED';
           } else {
             newReturnStatus = newReturnedAmount >= order.total ? 'FULL' : (newReturnedAmount > 0 ? 'PARTIAL' : 'NONE');
-            if (newReturnedAmount < order.total && order.status === 'REFUNDED') {
-              newStatus = 'COMPLETED';
-            }
           }
 
           await tx.salesOrder.update({
@@ -258,39 +254,7 @@ export async function DELETE(request: Request) {
         }
       }
 
-      // 2. If items were restocked, reverse the stock adjustment (deduct back)
-      if (orderReturn.restocked && orderReturn.items && orderReturn.items.length > 0) {
-        for (const retItem of orderReturn.items) {
-          if (retItem.itemId && Number(retItem.quantity) > 0) {
-            try {
-              await tx.item.update({
-                where: { id: retItem.itemId },
-                data: {
-                  stockQty: { decrement: Number(retItem.quantity) },
-                },
-              });
-            } catch (itemErr) {
-              console.warn(`Could not decrement Item.stockQty for returned item ${retItem.itemId}:`, itemErr);
-            }
-          }
-
-          const recipeIngredients = await tx.recipe.findMany({
-            where: { itemId: retItem.itemId },
-          });
-
-          for (const ing of recipeIngredients) {
-            const deductBack = ing.quantity * Number(retItem.quantity || 1);
-            await tx.rawMaterial.update({
-              where: { id: ing.rawMaterialId },
-              data: {
-                stockQty: { decrement: deductBack },
-              },
-            }).catch((ingErr) => console.warn('Failed to revert raw material stock:', ingErr));
-          }
-        }
-      }
-
-      // 3. Delete matching CashTransaction (refund payout) and restore shift drawer cash
+      // 2. Delete matching CashTransaction (refund payout) so shift cashTxImpact doesn't double-count
       const targetShiftId = orderReturn.shiftId;
       if (targetShiftId) {
         const receiptRef = orderReturn.order?.receiptNumber || orderReturn.orderId;
@@ -310,28 +274,9 @@ export async function DELETE(request: Request) {
             where: { id: matchingTx.id },
           }).catch((err) => console.warn('Failed to delete cash transaction:', err));
         }
-
-        // Always restore expectedCash to the shift drawer unconditionally
-        const shiftRecord = await tx.shift.findUnique({
-          where: { id: targetShiftId },
-        });
-
-        if (shiftRecord) {
-          const newExpectedCash = (shiftRecord.expectedCash || 0) + orderReturn.totalRefund;
-          const updateData: any = {
-            expectedCash: newExpectedCash,
-          };
-          if (shiftRecord.closedAt && shiftRecord.closedCash !== null) {
-            updateData.varianceCash = (shiftRecord.closedCash || 0) - newExpectedCash;
-          }
-          await tx.shift.update({
-            where: { id: targetShiftId },
-            data: updateData,
-          });
-        }
       }
 
-      // 4. Delete the OrderReturn (OrderReturnItem rows are cascade-deleted by foreign key)
+      // 3. Delete the OrderReturn (OrderReturnItem rows are cascade-deleted by foreign key)
       await tx.orderReturn.delete({
         where: { id: returnId },
       });
@@ -339,7 +284,7 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `تم مسح المرتجع تماماً وإعادة مبلغ (${orderReturn.totalRefund.toFixed(2)} ج) إلى درج الكاشير بنجاح`,
+      message: 'تم مسح المرتجع وإلغاء العملية تماماً دون إضافة أي زيادة على كاشير الوردية',
     });
   } catch (error: any) {
     console.error('DELETE return error:', error);
