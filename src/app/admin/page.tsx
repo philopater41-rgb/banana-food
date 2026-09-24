@@ -2733,7 +2733,7 @@ export default function AdminPage() {
                 </div>
 
                 {/* INVENTORY VALUATION & KPI STATS CARDS */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
                   {/* Card 1: TOTAL INVENTORY COST VALUE (THE MAIN REQUIREMENT) */}
                   <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-emerald-950/50 via-slate-900/90 to-slate-950 border-2 border-emerald-500/40 shadow-xl shadow-emerald-500/10">
                     <div className="flex items-center justify-between gap-2 mb-2">
@@ -2817,34 +2817,6 @@ export default function AdminPage() {
                     <div className="mt-2 text-[11px] text-gray-300/90 flex items-center justify-between border-t border-white/5 pt-1.5">
                       <span>الربح الإجمالي:</span>
                       <span className="font-mono text-amber-300 font-bold">البيعي - رأس المال</span>
-                    </div>
-                  </div>
-
-                  {/* Card 4: TODAY'S REALIZED PROFIT */}
-                  <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-purple-950/30 via-slate-900/90 to-slate-950 border border-purple-500/30 shadow-lg shadow-purple-500/5">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                          <DollarSign className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <span className="text-xs font-bold text-white block">أرباح مبيعات اليوم المحققة</span>
-                          <span className="text-[10px] text-purple-300/80 font-medium">فواتير اليوم المسجلة</span>
-                        </div>
-                      </div>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono font-semibold">
-                        محققة فعلياً
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-2xl font-black text-purple-400 font-mono tracking-tight">
-                        {totalTodayProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-xs text-purple-500 font-bold">ج.م</span>
-                    </div>
-                    <div className="mt-2 text-[11px] text-gray-300/90 flex items-center justify-between border-t border-white/5 pt-1.5">
-                      <span>صافي ربح اليوم:</span>
-                      <span className="font-mono text-purple-300 font-bold">فواتير مسجلة اليوم</span>
                     </div>
                   </div>
                 </div>
