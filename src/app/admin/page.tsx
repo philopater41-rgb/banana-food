@@ -400,6 +400,9 @@ export default function AdminPage() {
   // Selected Order for Receipt Modal
   const [selectedOrderReceipt, setSelectedOrderReceipt] = useState<any | null>(null);
 
+  // Return Delete In-App Confirmation Modal
+  const [returnToDelete, setReturnToDelete] = useState<{ id: string; receiptNum: string; refundAmount: number } | null>(null);
+
   useEffect(() => {
     setMounted(true);
     setTodayLabel(
@@ -1176,14 +1179,9 @@ export default function AdminPage() {
     }
   };
 
-  const handleDeleteReturn = async (id: string, receiptNum: string, refundAmount: number) => {
-    if (
-      !confirm(
-        `هل أنت متأكد من مسح وحذف حركة المرتجع للفاتورة (${receiptNum}) بمبلغ (${refundAmount.toFixed(2)} ج)؟\nسيتم مسح المرتجع نهائياً كأنه لم يكن، وإعادة الفلوس (${refundAmount.toFixed(2)} ج) إلى درج الكاشير.`
-      )
-    ) {
-      return;
-    }
+  const handleConfirmDeleteReturn = async () => {
+    if (!returnToDelete) return;
+    const { id, refundAmount } = returnToDelete;
     setDeletingReturnId(id);
     try {
       const res = await fetch(`/api/returns?id=${id}`, { method: 'DELETE' });
@@ -1191,6 +1189,7 @@ export default function AdminPage() {
       if (res.ok && data.success) {
         triggerAlert('success', data.message || `تم مسح المرتجع نهائياً وعادت (${refundAmount.toFixed(2)} ج) إلى الدرج بنجاح`);
         fetchAnalytics();
+        setReturnToDelete(null);
       } else {
         triggerAlert('error', data.error || 'فشل حذف المرتجع');
       }
@@ -1650,8 +1649,18 @@ export default function AdminPage() {
                   <span className="text-[10px] text-gray-500 mt-1 block">نثريات وخرجيات تشغيل المحل</span>
                 </div>
 
-                <div className="glass-panel p-4 rounded-2xl border border-rose-500/20 bg-gradient-to-br from-rose-950/20 to-transparent">
-                  <span className="text-[11px] text-gray-400 block">إجمالي المرتجعات النهاردة</span>
+                <div
+                  onClick={() => setActiveTab('returns')}
+                  className="glass-panel p-4 rounded-2xl border border-rose-500/20 bg-gradient-to-br from-rose-950/20 to-transparent hover:border-rose-500/50 hover:bg-rose-950/30 transition-all cursor-pointer group"
+                  title="اضغط للانتقال إلى سجل المرتجعات"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-gray-400 block">إجمالي المرتجعات النهاردة</span>
+                    <span className="text-[10px] text-rose-400 group-hover:underline flex items-center gap-0.5 font-semibold">
+                      <span>عرض السجل</span>
+                      <span>←</span>
+                    </span>
+                  </div>
                   <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
                     <span className="text-2xl font-bold text-rose-400 font-mono">EGP {kpis.todayReturnsAmount.toFixed(2)}</span>
                     <span className="text-[10px] text-gray-400">{kpis.todayReturnsCount} عملية إرجاع</span>
@@ -2676,7 +2685,7 @@ export default function AdminPage() {
                               <td className="p-3 text-center">
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteReturn(ret.id, receiptNum, refund)}
+                                  onClick={() => setReturnToDelete({ id: ret.id, receiptNum, refundAmount: refund })}
                                   disabled={deletingReturnId === ret.id}
                                   className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-sm cursor-pointer disabled:opacity-50"
                                   title="مسح المرتجع نهائياً وإعادة الفلوس للدرج"
@@ -4982,6 +4991,53 @@ export default function AdminPage() {
                 className="px-4 py-2.5 border border-gray-300 hover:bg-gray-100 text-gray-700 font-bold rounded-xl text-xs transition-all"
               >
                 إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Return Delete Confirmation In-App Modal */}
+      {returnToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-right animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-500/20 border border-rose-500/30">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">تأكيد مسح المرتجع نهائياً</h3>
+                <span className="text-xs text-rose-300 font-mono">فاتورة {returnToDelete.receiptNum}</span>
+              </div>
+            </div>
+
+            <div className="bg-slate-950/60 p-3.5 rounded-xl border border-white/5 space-y-2 text-xs text-gray-300">
+              <p>
+                هل أنت متأكد من مسح وإلغاء حركة هذا المرتجع بمبلغ <strong className="text-rose-400 font-mono text-sm">{returnToDelete.refundAmount.toFixed(2)} ج</strong>؟
+              </p>
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                • سيتم مسح المرتجع من النظام تماماً كأنه لم يحدث.<br />
+                • ستعود الفلوس تلقائياً إلى درج الكاشير.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setReturnToDelete(null)}
+                disabled={deletingReturnId !== null}
+                className="py-2.5 px-4 rounded-xl border border-white/10 hover:bg-white/5 text-gray-300 text-xs font-bold transition-all cursor-pointer"
+              >
+                تراجع / إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteReturn}
+                disabled={deletingReturnId !== null}
+                className="py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{deletingReturnId !== null ? 'جاري المسح...' : 'نعم، امسح المرتجع الآن'}</span>
               </button>
             </div>
           </div>
