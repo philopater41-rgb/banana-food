@@ -1781,7 +1781,7 @@ export default function AdminPage() {
                 </div>
 
                 <div className="overflow-x-auto rounded-xl border border-white/5">
-                  <table className="w-full text-right text-xs min-w-[700px]">
+                  <table className="w-full text-right text-xs min-w-[880px]">
                     <thead className="bg-slate-900/80 text-gray-400 border-b border-white/5">
                       <tr>
                         <th className="p-3">الكاشير</th>
@@ -1791,6 +1791,8 @@ export default function AdminPage() {
                         <th className="p-3">إجمالي المبيعات</th>
                         <th className="p-3">الكاش المتوقع</th>
                         <th className="p-3">الكاش الفعلي</th>
+                        <th className="p-3 text-purple-400">إنستا المتوقع</th>
+                        <th className="p-3 text-purple-300">إنستا الفعلي</th>
                         <th className="p-3 text-center">مطابقة الكاش وإنستا باي (العجز / الزيادة)</th>
                       </tr>
                     </thead>
@@ -1813,6 +1815,12 @@ export default function AdminPage() {
                               <td className="p-3 font-mono text-emerald-400">EGP {Number(s.expectedCash || 0).toFixed(2)}</td>
                               <td className="p-3 font-mono text-white">
                                 {isClosed ? `EGP ${Number(s.closedCash || 0).toFixed(2)}` : '—'}
+                              </td>
+                              <td className="p-3 font-mono text-purple-400 font-semibold">
+                                EGP {Number(s.expectedInstaPay || 0).toFixed(2)}
+                              </td>
+                              <td className="p-3 font-mono text-white font-semibold">
+                                {isClosed ? (s.closedInstaPay !== null && s.closedInstaPay !== undefined ? `EGP ${Number(s.closedInstaPay || 0).toFixed(2)}` : 'EGP 0.00') : '—'}
                               </td>
                               <td className="p-3 text-center">
                                 {!isClosed ? (
@@ -1870,7 +1878,7 @@ export default function AdminPage() {
                         })
                       ) : (
                         <tr>
-                          <td colSpan={8} className="p-6 text-center text-gray-500">
+                          <td colSpan={10} className="p-6 text-center text-gray-500">
                             لا توجد ورديات مسجلة حتى الآن
                           </td>
                         </tr>
