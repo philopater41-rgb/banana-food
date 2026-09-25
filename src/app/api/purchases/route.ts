@@ -22,6 +22,7 @@ export async function GET(request: Request) {
         items: {
           include: {
             rawMaterial: { select: { id: true, name: true, purchaseUnit: true, deductUnit: true } },
+            item: { select: { id: true, name: true, cost: true, price: true, unit: true } },
           },
         },
       },
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
   }
 }
 
-// POST: Create a purchase invoice and update stock
+// POST: Create a purchase invoice and update stock & track price history
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -67,7 +68,43 @@ export async function POST(request: Request) {
 
     // Prisma Transaction
     const createdInvoice = await prisma.$transaction(async (tx) => {
-      // 1. Create Purchase Invoice
+      // 1. Snapshot previous costs and selling prices for all items before applying updates
+      const preparedItems = [];
+      for (const it of items) {
+        const qty = Number(it.quantity) || 1;
+        const tot = it.totalPrice !== undefined && it.totalPrice !== '' ? Number(it.totalPrice) : qty * Number(it.unitPrice || 0);
+        const unit = qty > 0 ? tot / qty : tot;
+
+        let matchedItem = null;
+        if (it.itemId) {
+          matchedItem = await tx.item.findUnique({ where: { id: it.itemId } });
+        }
+        if (!matchedItem && it.itemName) {
+          matchedItem = await tx.item.findFirst({ where: { name: it.itemName.trim() } });
+        }
+
+        const prevCost = matchedItem ? matchedItem.cost : null;
+        const prevPrice = matchedItem ? matchedItem.price : null;
+        const currSelling = (it.sellingPrice !== undefined && it.sellingPrice !== '' && Number(it.sellingPrice) > 0)
+          ? Number(it.sellingPrice)
+          : (matchedItem ? matchedItem.price : null);
+
+        preparedItems.push({
+          rawMaterialId: it.rawMaterialId || null,
+          itemId: matchedItem ? matchedItem.id : null,
+          itemName: it.itemName,
+          quantity: qty,
+          purchaseUnit: it.purchaseUnit || 'كجم',
+          unitPrice: unit,
+          totalPrice: tot,
+          previousCost: prevCost,
+          currentSellingPrice: currSelling,
+          previousSellingPrice: prevPrice,
+          matchedItem,
+        });
+      }
+
+      // 2. Create Purchase Invoice with recorded price & cost histories
       const invoice = await tx.purchaseInvoice.create({
         data: {
           invoiceNumber: generatedNumber,
@@ -80,19 +117,18 @@ export async function POST(request: Request) {
           paymentMethod,
           notes: notes || null,
           items: {
-            create: items.map((it: any) => {
-              const qty = Number(it.quantity) || 1;
-              const tot = it.totalPrice !== undefined && it.totalPrice !== '' ? Number(it.totalPrice) : qty * Number(it.unitPrice || 0);
-              const unit = qty > 0 ? tot / qty : tot;
-              return {
-                rawMaterialId: it.rawMaterialId || null,
-                itemName: it.itemName,
-                quantity: qty,
-                purchaseUnit: it.purchaseUnit || 'unit',
-                unitPrice: unit,
-                totalPrice: tot,
-              };
-            }),
+            create: preparedItems.map((p) => ({
+              rawMaterialId: p.rawMaterialId,
+              itemId: p.itemId,
+              itemName: p.itemName,
+              quantity: p.quantity,
+              purchaseUnit: p.purchaseUnit,
+              unitPrice: p.unitPrice,
+              totalPrice: p.totalPrice,
+              previousCost: p.previousCost,
+              currentSellingPrice: p.currentSellingPrice,
+              previousSellingPrice: p.previousSellingPrice,
+            })),
           },
         },
         include: {
@@ -100,45 +136,32 @@ export async function POST(request: Request) {
         },
       });
 
-      // 2. Increment Stock & Update Wholesale Cost for Produce Items & RawMaterials
-      for (const it of items) {
-        const qty = Number(it.quantity) || 0;
-        const tot = it.totalPrice !== undefined && it.totalPrice !== '' ? Number(it.totalPrice) : qty * Number(it.unitPrice || 0);
-        const unit = qty > 0 ? tot / qty : tot;
-
-        // A) Update wholesale cost in Item table (Produce Item) so POS and Reports reflect latest market cost
-        // A) Update wholesale cost & selling price in Item table (Produce Item) so POS and Reports reflect latest market cost
-        try {
-          let matchedItem = null;
-          if (it.itemId) {
-            matchedItem = await tx.item.findUnique({ where: { id: it.itemId } });
-          }
-          if (!matchedItem && it.itemName) {
-            matchedItem = await tx.item.findFirst({ where: { name: it.itemName.trim() } });
-          }
-          if (matchedItem) {
+      // 3. Increment Stock & Update Wholesale Cost and Selling Price
+      for (const p of preparedItems) {
+        if (p.matchedItem) {
+          try {
             const updateData: any = {};
-            if (unit > 0) updateData.cost = unit;
-            if (qty > 0) updateData.stockQty = { increment: qty };
-            if (it.sellingPrice !== undefined && it.sellingPrice !== '' && Number(it.sellingPrice) > 0) {
-              updateData.price = Number(it.sellingPrice);
+            if (p.unitPrice > 0) updateData.cost = p.unitPrice;
+            if (p.quantity > 0) updateData.stockQty = { increment: p.quantity };
+            if (p.currentSellingPrice !== null && p.currentSellingPrice > 0) {
+              updateData.price = p.currentSellingPrice;
             }
             if (Object.keys(updateData).length > 0) {
               await tx.item.update({
-                where: { id: matchedItem.id },
+                where: { id: p.matchedItem.id },
                 data: updateData,
               });
             }
+          } catch (itemErr) {
+            console.warn('Could not update Item:', itemErr);
           }
-        } catch (itemErr) {
-          console.warn('Could not update Item.cost, price and stockQty:', itemErr);
         }
 
-        // B) Update RawMaterial stock & cost if matched or specified
+        // RawMaterial stock update if linked
         try {
-          let rmId = it.rawMaterialId;
-          if (!rmId && it.itemName) {
-            const matchedRm = await tx.rawMaterial.findFirst({ where: { name: it.itemName.trim() } });
+          let rmId = p.rawMaterialId;
+          if (!rmId && p.itemName) {
+            const matchedRm = await tx.rawMaterial.findFirst({ where: { name: p.itemName.trim() } });
             if (matchedRm) rmId = matchedRm.id;
           }
 
@@ -148,23 +171,22 @@ export async function POST(request: Request) {
             });
 
             if (rawMat) {
-              const addedStockInDeductUnits = qty * (rawMat.conversionFactor || 1);
+              const addedStockInDeductUnits = p.quantity * (rawMat.conversionFactor || 1);
               await tx.rawMaterial.update({
                 where: { id: rmId },
                 data: {
                   stockQty: {
                     increment: addedStockInDeductUnits,
                   },
-                  costPerPurchaseUnit: unit > 0 ? unit : (rawMat.costPerPurchaseUnit || 0),
+                  costPerPurchaseUnit: p.unitPrice > 0 ? p.unitPrice : (rawMat.costPerPurchaseUnit || 0),
                 },
               });
 
-              // Also record a restock log for history
               await tx.restockLog.create({
                 data: {
                   rawMaterialId: rmId,
-                  quantity: Number(it.quantity),
-                  amount: tot,
+                  quantity: p.quantity,
+                  amount: p.totalPrice,
                   createdAt: invoiceDate ? new Date(invoiceDate) : new Date(),
                 },
               });
@@ -222,5 +244,26 @@ export async function PATCH(request: Request) {
   } catch (error: any) {
     console.error('PATCH purchase payment error:', error);
     return NextResponse.json({ error: error.message || 'Failed to update payment' }, { status: 500 });
+  }
+}
+
+// DELETE: Delete a purchase invoice
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
+
+    await prisma.purchaseInvoice.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('DELETE purchase invoice error:', error);
+    return NextResponse.json({ error: error.message || 'Failed to delete purchase invoice' }, { status: 500 });
   }
 }

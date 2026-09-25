@@ -832,7 +832,7 @@ export default function POSPage() {
   };
 
   // Complete / Place Order
-  const handleCompleteOrder = async () => {
+  const handleCompleteOrder = async (shouldPrint: boolean = true) => {
     if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
       triggerAlert('error', 'الفاتورة لسه فاضية! نزل خضار أو فاكهة الأول عشان تحاسب الزبون.');
       return;
@@ -939,13 +939,18 @@ export default function POSPage() {
       setDiscountVal('');
       setDiscountReason('');
 
-      // 4. Trigger print with Banana Food B&W receipt directly without blocking modal
-      setReceiptOrder(newOrder);
-      setTimeout(() => {
-        window.print();
-      }, 300);
+      // 4. Trigger print if requested or complete silently
+      if (shouldPrint) {
+        setReceiptOrder(newOrder);
+        setTimeout(() => {
+          window.print();
+        }, 300);
+        triggerAlert('success', `تمام يا فنان! قفلنا الحساب وجاري طباعة وصل ${receiptNumber}`);
+      } else {
+        setReceiptOrder(null);
+        triggerAlert('success', `تمام يا فنان! تم قفل الفاتورة وحفظ الحساب بنجاح (رقم ${receiptNumber}) بدون طباعة.`);
+      }
 
-      triggerAlert('success', `تمام يا فنان! قفلنا الحساب وجاري طباعة وصل ${receiptNumber}`);
       triggerSync();
     } catch (e) {
       console.error('Failed to complete order:', e);
@@ -1759,15 +1764,30 @@ export default function POSPage() {
                 </div>
               </div>
 
-              {/* Confirm Checkout Button */}
-              <button
-                onClick={() => setShowPaymentConfirm(true)}
-                disabled={!cart || !Array.isArray(cart.items) || cart.items.length === 0}
-                className="w-full py-3 bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-600 hover:from-emerald-600 hover:to-green-700 text-white font-black rounded-xl shadow-lg shadow-emerald-500/15 transition-all disabled:opacity-40 text-sm flex items-center justify-center gap-2 flex-row-reverse cursor-pointer active:scale-98"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>{`قفل الحساب وطباعة الوصل (${cart?.total.toFixed(2) || '0.00'} جنيه)`}</span>
-              </button>
+              {/* Confirm Checkout Buttons (Print vs No-Print) */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentConfirm(true)}
+                  disabled={!cart || !Array.isArray(cart.items) || cart.items.length === 0}
+                  className="w-full py-3 bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-600 hover:from-emerald-600 hover:to-green-700 text-white font-black rounded-xl shadow-lg shadow-emerald-500/15 transition-all disabled:opacity-40 text-xs sm:text-sm flex items-center justify-center gap-1.5 flex-row-reverse cursor-pointer active:scale-98"
+                  title="مراجعة الحساب وطباعة الوصل"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>{`قفل وطباعة (${cart?.total.toFixed(2) || '0.00'} ج)`}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleCompleteOrder(false)}
+                  disabled={!cart || !Array.isArray(cart.items) || cart.items.length === 0}
+                  className="w-full py-3 bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-black rounded-xl shadow-lg shadow-cyan-600/15 transition-all disabled:opacity-40 text-xs sm:text-sm flex items-center justify-center gap-1.5 flex-row-reverse cursor-pointer active:scale-98"
+                  title="إنهاء وقفل الفاتورة بدون طباعة ورقة الوصل"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>قفل بدون طباعة</span>
+                </button>
+              </div>
             </div>
           </section>
         </main>
@@ -2418,18 +2438,39 @@ export default function POSPage() {
                   </div>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={() => setShowPaymentConfirm(false)} className="py-2.5 border border-white/10 text-white rounded-xl text-xs cursor-pointer">ارجع للفاتورة</button>
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button 
+                    type="button" 
+                    onClick={() => { 
+                      setShowPaymentConfirm(false); 
+                      handleCompleteOrder(true); 
+                    }} 
+                    className="py-3 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20 active:scale-95 transition-all"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>إنهاء وطباعة الوصل</span>
+                  </button>
+
+                  <button 
+                    type="button" 
+                    onClick={() => { 
+                      setShowPaymentConfirm(false); 
+                      handleCompleteOrder(false); 
+                    }} 
+                    className="py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-cyan-600/20 active:scale-95 transition-all"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>إنهاء بدون طباعة</span>
+                  </button>
+                </div>
+
                 <button 
                   type="button" 
-                  onClick={() => { 
-                    setShowPaymentConfirm(false); 
-                    handleCompleteOrder(); 
-                  }} 
-                  className="py-2.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20 active:scale-95 transition-all"
+                  onClick={() => setShowPaymentConfirm(false)} 
+                  className="w-full py-2 border border-white/10 hover:bg-white/5 text-gray-300 hover:text-white rounded-xl text-xs cursor-pointer transition-colors"
                 >
-                  <Printer className="w-4 h-4" />
-                  <span>طباعة الإيصال</span>
+                  الرجوع للفاتورة
                 </button>
               </div>
             </div>

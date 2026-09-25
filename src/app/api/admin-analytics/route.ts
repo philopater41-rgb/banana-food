@@ -357,7 +357,7 @@ export async function GET() {
         for (const tx of shift.transactions || []) {
           if (tx.type === 'PAYIN') {
             cashTxImpact += tx.amount;
-          } else if (tx.type === 'PAYOUT' || tx.type === 'REFUND_PAYOUT') {
+          } else if (tx.type === 'REFUND_PAYOUT') {
             cashTxImpact -= tx.amount;
           }
         }

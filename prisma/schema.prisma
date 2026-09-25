@@ -44,6 +44,7 @@ model Item {
   recipe        Recipe[]
   orderItems    SalesOrderItem[]
   returnItems   OrderReturnItem[]
+  purchaseItems PurchaseInvoiceItem[]
 }
 
 model Modifier {
@@ -210,16 +211,21 @@ model PurchaseInvoice {
 }
 
 model PurchaseInvoiceItem {
-  id              String          @id @default(uuid())
-  invoiceId       String
-  invoice         PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  rawMaterialId   String?
-  rawMaterial     RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
-  itemName        String
-  quantity        Float           // in purchase unit
-  purchaseUnit    String          // e.g. "kg", "liter", "box"
-  unitPrice       Float
-  totalPrice      Float
+  id                   String          @id @default(uuid())
+  invoiceId            String
+  invoice              PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  rawMaterialId        String?
+  rawMaterial          RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
+  itemId               String?
+  item                 Item?           @relation(fields: [itemId], references: [id])
+  itemName             String
+  quantity             Float           // in purchase unit
+  purchaseUnit         String          // e.g. "kg", "liter", "box"
+  unitPrice            Float
+  totalPrice           Float
+  previousCost         Float?          // Previous unit cost before this restock
+  currentSellingPrice  Float?          // Selling price at this restock
+  previousSellingPrice Float?          // Previous selling price before this restock
 }
 
 // 8. Sales Orders & Items

@@ -45,10 +45,10 @@ export async function GET() {
 
     let cashTxImpact = 0;
     for (const tx of activeShift.transactions) {
-      // Include all cash movements: deposits, expenses, and customer refund payouts
+      // Include deposits and customer refund payouts; operating expenses (PAYOUT) do NOT deduct from shift drawer cash
       if (tx.type === 'PAYIN') {
         cashTxImpact += tx.amount;
-      } else if (tx.type === 'PAYOUT' || tx.type === 'REFUND_PAYOUT') {
+      } else if (tx.type === 'REFUND_PAYOUT') {
         cashTxImpact -= tx.amount;
       }
     }

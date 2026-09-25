@@ -52,12 +52,12 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Calculate cash transactions impact (including all payouts and return refunds)
+    // 2. Calculate cash transactions impact (deposits & return refunds; operating expenses do not reduce drawer cash)
     let cashTxImpact = 0;
     for (const tx of shift.transactions) {
       if (tx.type === 'PAYIN') {
         cashTxImpact += tx.amount;
-      } else if (tx.type === 'PAYOUT' || tx.type === 'REFUND_PAYOUT') {
+      } else if (tx.type === 'REFUND_PAYOUT') {
         cashTxImpact -= tx.amount;
       }
     }

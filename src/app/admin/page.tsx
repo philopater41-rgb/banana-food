@@ -146,6 +146,7 @@ export default function AdminPage() {
   const [purSupplierId, setPurSupplierId] = useState('');
   const [purPaymentMethod, setPurPaymentMethod] = useState('CASH');
   const [purPaidAmount, setPurPaidAmount] = useState('');
+  const [purInvoiceDate, setPurInvoiceDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [purItems, setPurItems] = useState<Array<{
     itemId: string;
     rawMaterialId: string;
@@ -189,6 +190,10 @@ export default function AdminPage() {
   const [profitSearchQuery, setProfitSearchQuery] = useState('');
   const [profitCategoryFilter, setProfitCategoryFilter] = useState<string>('ALL');
   const [profitStockFilter, setProfitStockFilter] = useState<'ALL' | 'LOW' | 'OUT' | 'AVAILABLE'>('ALL');
+  const [profitSubTab, setProfitSubTab] = useState<'costs' | 'supplies'>('costs');
+  const [selectedSupplyMonth, setSelectedSupplyMonth] = useState<string>('');
+  const [supplySearchQuery, setSupplySearchQuery] = useState<string>('');
+  const [deletingPurchaseInvoiceId, setDeletingPurchaseInvoiceId] = useState<string | null>(null);
 
   const profitCategories = useMemo(() => {
     const cats = new Set<string>();
@@ -277,6 +282,111 @@ export default function AdminPage() {
       totalStockQty,
     };
   }, [filteredProductCosts]);
+
+  // Supply Log Grouped by Month and Day
+  const supplyLogByMonth = useMemo(() => {
+    const monthMap = new Map<string, {
+      monthKey: string;
+      monthName: string;
+      totalCost: number;
+      totalPaid: number;
+      itemsCount: number;
+      days: Map<string, {
+        dayKey: string;
+        dayDisplay: string;
+        dayName: string;
+        totalCost: number;
+        totalPaid: number;
+        itemsCount: number;
+        items: Array<{
+          id: string;
+          invoiceId: string;
+          invoiceNumber: string | null;
+          supplierName: string;
+          paymentMethod: string;
+          itemName: string;
+          quantity: number;
+          purchaseUnit: string;
+          unitPrice: number;
+          totalPrice: number;
+          previousCost: number | null;
+          currentSellingPrice: number | null;
+          previousSellingPrice: number | null;
+        }>;
+      }>;
+    }>();
+
+    for (const inv of purchaseInvoices) {
+      const d = new Date(inv.invoiceDate || inv.createdAt);
+      const year = d.getFullYear();
+      const monthNum = String(d.getMonth() + 1).padStart(2, '0');
+      const dayNum = String(d.getDate()).padStart(2, '0');
+      const monthKey = `${year}-${monthNum}`;
+      const dayKey = `${year}-${monthNum}-${dayNum}`;
+
+      const monthName = d.toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' });
+      const dayName = d.toLocaleDateString('ar-EG', { weekday: 'long' });
+      const dayDisplay = `${dayNum}/${monthNum}/${year}`;
+
+      if (!monthMap.has(monthKey)) {
+        monthMap.set(monthKey, {
+          monthKey,
+          monthName,
+          totalCost: 0,
+          totalPaid: 0,
+          itemsCount: 0,
+          days: new Map(),
+        });
+      }
+      const mData = monthMap.get(monthKey)!;
+      mData.totalCost += inv.totalAmount || 0;
+      mData.totalPaid += inv.paidAmount || 0;
+
+      if (!mData.days.has(dayKey)) {
+        mData.days.set(dayKey, {
+          dayKey,
+          dayDisplay,
+          dayName,
+          totalCost: 0,
+          totalPaid: 0,
+          itemsCount: 0,
+          items: [],
+        });
+      }
+      const dData = mData.days.get(dayKey)!;
+      dData.totalCost += inv.totalAmount || 0;
+      dData.totalPaid += inv.paidAmount || 0;
+
+      for (const it of (inv.items || [])) {
+        mData.itemsCount += 1;
+        dData.itemsCount += 1;
+        dData.items.push({
+          id: it.id,
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          supplierName: inv.supplierName || inv.supplier?.name || 'مورد عام',
+          paymentMethod: inv.paymentMethod || 'CASH',
+          itemName: it.itemName,
+          quantity: it.quantity,
+          purchaseUnit: it.purchaseUnit || 'كجم',
+          unitPrice: it.unitPrice,
+          totalPrice: it.totalPrice,
+          previousCost: it.previousCost !== undefined && it.previousCost !== null ? it.previousCost : (it.item?.cost ?? null),
+          currentSellingPrice: it.currentSellingPrice !== undefined && it.currentSellingPrice !== null ? it.currentSellingPrice : (it.item?.price ?? null),
+          previousSellingPrice: it.previousSellingPrice !== undefined && it.previousSellingPrice !== null ? it.previousSellingPrice : null,
+        });
+      }
+    }
+
+    const sortedMonths = Array.from(monthMap.values())
+      .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
+      .map((m) => ({
+        ...m,
+        daysList: Array.from(m.days.values()).sort((a, b) => b.dayKey.localeCompare(a.dayKey)),
+      }));
+
+    return sortedMonths;
+  }, [purchaseInvoices]);
 
   const [lowStockItems, setLowStockItems] = useState<Array<{
     id: string;
@@ -664,6 +774,7 @@ export default function AdminPage() {
         body: JSON.stringify({
           supplierId: purSupplierId || null,
           supplierName: supp ? supp.name : null,
+          invoiceDate: purInvoiceDate ? new Date(purInvoiceDate).toISOString() : undefined,
           paymentMethod: purPaymentMethod,
           paidAmount: purPaidAmount ? parseFloat(purPaidAmount) : undefined,
           items: formattedItems,
@@ -677,11 +788,33 @@ export default function AdminPage() {
       setShowAddPurchaseModal(false);
       setPurItems([{ itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '', sellingPrice: '' }]);
       setPurPaidAmount('');
+      setPurInvoiceDate(new Date().toISOString().slice(0, 10));
       fetchSuppliersAndPurchases();
       fetchInventory();
       fetchProductCosts();
     } catch (err: any) {
       triggerAlert('error', err.message);
+    }
+  };
+
+  // Delete Purchase Invoice from Log
+  const handleDeletePurchaseInvoice = async (invoiceId: string) => {
+    if (!confirm('هل أنت متأكد من حذف فاتورة التوريد هذه من السجل؟ سيتم حذف بيانات التوريد المرتبطة بها.')) return;
+    setDeletingPurchaseInvoiceId(invoiceId);
+    try {
+      const res = await fetch(`/api/purchases?id=${invoiceId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'فشل حذف الفاتورة');
+      }
+      triggerAlert('success', 'تم حذف فاتورة التوريد بنجاح من السجل');
+      fetchSuppliersAndPurchases();
+      fetchInventory();
+      fetchProductCosts();
+    } catch (e: any) {
+      triggerAlert('error', e.message);
+    } finally {
+      setDeletingPurchaseInvoiceId(null);
     }
   };
 
@@ -2718,29 +2851,50 @@ export default function AdminPage() {
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-bold text-white">حسبة التكلفة الحقيقية وهوامش المكسب ومخزون المحل</h3>
-                    <p className="text-xs text-gray-400">متابعة الكميات الحالية المتوفرة بالمحل وحدود النواقص وأسعار تكلفة الشراء وهوامش الربح ورأس مال البضاعة</p>
+                    <p className="text-xs text-gray-400">متابعة الكميات الحالية المتوفرة بالمحل وحدود النواقص وأسعار تكلفة الشراء وهوامش الربح وسجل التوريدات اليومية والشهرية</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                    {profitSubTab === 'costs' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewItemName('');
+                          setNewItemCategory('');
+                          setNewItemPrice('');
+                          setNewItemCost('');
+                          setNewItemMargin('');
+                          setNewItemStockQty('50');
+                          setNewItemMinStock('15');
+                          setNewItemUnit('كجم');
+                          setNewItemIngredients([]);
+                          setShowAddItemModal(true);
+                        }}
+                        className="flex-1 sm:flex-initial justify-center px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-xs font-bold hover:from-emerald-600 hover:to-cyan-600 flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        <span>+ إضافة صنف جديد للمحل</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPurInvoiceDate(new Date().toISOString().slice(0, 10));
+                          setPurItems([{ itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '', sellingPrice: '' }]);
+                          setPurPaidAmount('');
+                          setShowAddPurchaseModal(true);
+                        }}
+                        className="flex-1 sm:flex-initial justify-center px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-xs font-bold hover:from-cyan-600 hover:to-blue-700 flex items-center gap-1.5 shadow-lg shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        <span>+ تسجيل فاتورة توريد / بضاعة جديدة</span>
+                      </button>
+                    )}
                     <button
+                      type="button"
                       onClick={() => {
-                        setNewItemName('');
-                        setNewItemCategory('');
-                        setNewItemPrice('');
-                        setNewItemCost('');
-                        setNewItemMargin('');
-                        setNewItemStockQty('50');
-                        setNewItemMinStock('15');
-                        setNewItemUnit('كجم');
-                        setNewItemIngredients([]);
-                        setShowAddItemModal(true);
+                        fetchProductCosts();
+                        fetchSuppliersAndPurchases();
                       }}
-                      className="flex-1 sm:flex-initial justify-center px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-xs font-bold hover:from-emerald-600 hover:to-cyan-600 flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
-                    >
-                      <PlusCircle className="w-4 h-4" />
-                      <span>+ إضافة صنف جديد للمحل</span>
-                    </button>
-                    <button
-                      onClick={() => fetchProductCosts()}
                       className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 hover:text-white transition-all cursor-pointer"
                       title="تحديث البيانات"
                     >
@@ -2748,6 +2902,41 @@ export default function AdminPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* SUB-TABS: Costs & Margins VS Supply & Purchases Log */}
+                <div className="flex items-center gap-2 border-b border-white/10 pb-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setProfitSubTab('costs')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      profitSubTab === 'costs'
+                        ? 'bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-lg shadow-emerald-500/20'
+                        : 'bg-slate-900/80 hover:bg-white/5 text-gray-400 hover:text-white border border-white/5'
+                    }`}
+                  >
+                    <TrendingUp className="w-4 h-4" />
+                    <span>حسبة التكلفة وهوامش الربح والمخزون</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfitSubTab('supplies');
+                      fetchSuppliersAndPurchases();
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      profitSubTab === 'supplies'
+                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
+                        : 'bg-slate-900/80 hover:bg-white/5 text-gray-400 hover:text-white border border-white/5'
+                    }`}
+                  >
+                    <Truck className="w-4 h-4" />
+                    <span>سجل التوريدات وفواتير البضاعة ({purchaseInvoices.length} فاتورة)</span>
+                  </button>
+                </div>
+
+                {profitSubTab === 'costs' ? (
+                  <>
 
                 {/* INVENTORY VALUATION & KPI STATS CARDS */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
@@ -3097,6 +3286,267 @@ export default function AdminPage() {
                     </tfoot>
                   </table>
                 </div>
+              </>
+            ) : (
+              /* TAB CONTENT: SUPPLY & PURCHASES LOG */
+              <div className="space-y-6 pt-1">
+                {supplyLogByMonth.length > 0 ? (
+                  <div className="space-y-4">
+                    {/* Month Selector Tabs */}
+                    <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
+                      {supplyLogByMonth.map((m) => {
+                        const isSelected = (selectedSupplyMonth || supplyLogByMonth[0]?.monthKey) === m.monthKey;
+                        return (
+                          <button
+                            key={m.monthKey}
+                            type="button"
+                            onClick={() => setSelectedSupplyMonth(m.monthKey)}
+                            className={`flex flex-col items-start p-3 rounded-2xl border text-right transition-all cursor-pointer min-w-[170px] ${
+                              isSelected
+                                ? 'bg-gradient-to-br from-cyan-950/70 to-blue-950/50 border-cyan-500 shadow-lg shadow-cyan-500/10 text-white'
+                                : 'bg-slate-900/60 border-white/5 hover:border-white/15 text-gray-400 hover:text-gray-200'
+                            }`}
+                          >
+                            <span className="text-xs font-bold text-white flex items-center gap-1.5 mb-1">
+                              <Calendar className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>{m.monthName}</span>
+                            </span>
+                            <div className="flex items-center justify-between w-full text-[11px] font-mono">
+                              <span className="text-emerald-400 font-bold">EGP {m.totalPaid.toLocaleString()} مدفوع</span>
+                              <span className="text-gray-400">({m.daysList.length} أيام)</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Active Month View */}
+                    {(() => {
+                      const activeM = supplyLogByMonth.find(
+                        (m) => m.monthKey === (selectedSupplyMonth || supplyLogByMonth[0]?.monthKey)
+                      ) || supplyLogByMonth[0];
+
+                      if (!activeM) return null;
+
+                      const filteredDays = activeM.daysList.map((day) => {
+                        if (!supplySearchQuery.trim()) return day;
+                        const q = supplySearchQuery.trim().toLowerCase();
+                        const matchingItems = day.items.filter((it) =>
+                          it.itemName.toLowerCase().includes(q) ||
+                          it.supplierName.toLowerCase().includes(q)
+                        );
+                        return {
+                          ...day,
+                          items: matchingItems,
+                          itemsCount: matchingItems.length,
+                        };
+                      }).filter((day) => day.items.length > 0 || !supplySearchQuery.trim());
+
+                      return (
+                        <div className="space-y-4">
+                          {/* Filter & Stats bar */}
+                          <div className="bg-slate-900/70 border border-white/10 rounded-xl p-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                            <div className="relative flex-1 sm:max-w-md">
+                              <Search className="w-4 h-4 text-gray-400 absolute right-3 top-2.5" />
+                              <input
+                                type="text"
+                                value={supplySearchQuery}
+                                onChange={(e) => setSupplySearchQuery(e.target.value)}
+                                placeholder="ابحث باسم الصنف (خيار، طماطم...) أو المورد في هذا الشهر..."
+                                className="w-full bg-slate-950/80 border border-white/10 rounded-xl pr-9 pl-9 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
+                              />
+                              {supplySearchQuery && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSupplySearchQuery('')}
+                                  className="absolute left-2.5 top-2 text-gray-400 hover:text-white p-0.5 cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400">
+                              <span>أيام التوريد: <strong className="text-white font-mono">{activeM.daysList.length}</strong> يوم</span>
+                              <span>•</span>
+                              <span>قيمة البضاعة: <strong className="text-cyan-400 font-mono">EGP {activeM.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
+                              <span>•</span>
+                              <span>إجمالي المدفوع: <strong className="text-emerald-400 font-mono">EGP {activeM.totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Days List */}
+                          {filteredDays.length > 0 ? (
+                            <div className="space-y-4">
+                              {filteredDays.map((day) => (
+                                <div key={day.dayKey} className="glass-panel rounded-2xl border border-white/10 overflow-hidden shadow-xl bg-slate-950/40">
+                                  {/* Day Header Banner with Daily Total Paid */}
+                                  <div className="p-3.5 sm:p-4 bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/30 border-b border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="w-9 h-9 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0">
+                                        <Calendar className="w-4 h-4" />
+                                      </div>
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <h4 className="text-sm font-bold text-white">
+                                            {day.dayName}، {day.dayDisplay}
+                                          </h4>
+                                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-gray-300 font-medium">
+                                            {day.itemsCount} صنف بضاعة
+                                          </span>
+                                        </div>
+                                        <span className="text-[11px] text-gray-400 block mt-0.5">
+                                          سجل توريدات بضاعة الخضار والفاكهة للمحل
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Daily Total Cash Highlight */}
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-2">
+                                        <span className="text-[11px] text-gray-300">إجمالي الفلوس المدفوعة اليوم:</span>
+                                        <span className="text-sm font-black font-mono text-emerald-400">
+                                          {day.totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م
+                                        </span>
+                                      </div>
+
+                                      <div className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 flex items-center gap-2">
+                                        <span className="text-[11px] text-gray-400">إجمالي قيمة الفاتورة:</span>
+                                        <span className="text-xs font-bold font-mono text-cyan-300">
+                                          {day.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Day Items Table */}
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-right text-xs">
+                                      <thead className="bg-slate-900/90 text-gray-400 text-[11px] border-b border-white/5">
+                                        <tr>
+                                          <th className="p-3">صنف الخضار / الفاكهة</th>
+                                          <th className="p-3">الكمية المدخلة</th>
+                                          <th className="p-3 text-cyan-300 font-bold">إجمالي تكلفة الشراء</th>
+                                          <th className="p-3 text-cyan-400 font-bold">سعر تكلفة الكيلو/الوحدة</th>
+                                          <th className="p-3 text-gray-300">التكلفة السابقة</th>
+                                          <th className="p-3 text-emerald-400 font-bold">سعر البيع الحالي</th>
+                                          <th className="p-3 text-gray-300">سعر البيع السابق</th>
+                                          <th className="p-3">المورد وطريقة الدفع</th>
+                                          <th className="p-3 text-center">إجراءات</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-white/5">
+                                        {day.items.map((it) => {
+                                          const costDiff = it.previousCost !== null ? it.unitPrice - it.previousCost : null;
+                                          const priceDiff = (it.currentSellingPrice !== null && it.previousSellingPrice !== null)
+                                            ? it.currentSellingPrice - it.previousSellingPrice
+                                            : null;
+
+                                          return (
+                                            <tr key={it.id} className="hover:bg-white/[0.03] transition-colors">
+                                              <td className="p-3 font-bold text-white flex items-center gap-1.5">
+                                                <Package className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                                <span>{it.itemName}</span>
+                                              </td>
+                                              <td className="p-3 font-mono font-semibold text-gray-200">
+                                                {it.quantity} {it.purchaseUnit}
+                                              </td>
+                                              <td className="p-3 font-mono font-bold text-cyan-300 text-sm">
+                                                {it.totalPrice.toFixed(2)} ج.م
+                                              </td>
+                                              <td className="p-3 font-mono font-bold text-white bg-white/5">
+                                                {it.unitPrice.toFixed(2)} ج / {it.purchaseUnit}
+                                              </td>
+                                              <td className="p-3 font-mono text-gray-400">
+                                                {it.previousCost !== null ? (
+                                                  <div className="flex items-center gap-1">
+                                                    <span>{it.previousCost.toFixed(2)} ج</span>
+                                                    {costDiff !== null && costDiff !== 0 && (
+                                                      <span className={`text-[10px] font-bold ${costDiff > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                        ({costDiff > 0 ? `+${costDiff.toFixed(2)}` : costDiff.toFixed(2)})
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-gray-600">- (أول توريد)</span>
+                                                )}
+                                              </td>
+                                              <td className="p-3 font-mono font-bold text-emerald-400 text-sm bg-emerald-500/10">
+                                                {it.currentSellingPrice !== null ? `${it.currentSellingPrice.toFixed(2)} ج` : '-'}
+                                              </td>
+                                              <td className="p-3 font-mono text-gray-400">
+                                                {it.previousSellingPrice !== null ? (
+                                                  <div className="flex items-center gap-1">
+                                                    <span>{it.previousSellingPrice.toFixed(2)} ج</span>
+                                                    {priceDiff !== null && priceDiff !== 0 && (
+                                                      <span className={`text-[10px] font-bold ${priceDiff > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                        ({priceDiff > 0 ? `+${priceDiff.toFixed(2)}` : priceDiff.toFixed(2)})
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-gray-600">-</span>
+                                                )}
+                                              </td>
+                                              <td className="p-3">
+                                                <span className="text-gray-300 font-semibold block">{it.supplierName}</span>
+                                                <span className="text-[10px] text-gray-500 font-mono">
+                                                  {it.paymentMethod === 'CASH' ? 'نقدي (كاش)' : it.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'آجل'}
+                                                </span>
+                                              </td>
+                                              <td className="p-3 text-center">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleDeletePurchaseInvoice(it.invoiceId)}
+                                                  disabled={deletingPurchaseInvoiceId === it.invoiceId}
+                                                  className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-all cursor-pointer"
+                                                  title="حذف فاتورة التوريد هذه من السجل"
+                                                >
+                                                  <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-8 text-center glass-panel rounded-2xl border border-white/5 text-gray-400 text-xs">
+                              لا توجد أصناف مطابقة لكلمة البحث في هذا الشهر.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div className="p-12 text-center glass-panel rounded-2xl border border-white/5 space-y-3">
+                    <Truck className="w-10 h-10 text-cyan-400 mx-auto opacity-70" />
+                    <h4 className="text-base font-bold text-white">لا توجد فواتير توريد مسجلة حتى الآن</h4>
+                    <p className="text-xs text-gray-400 max-w-md mx-auto">
+                      بمجرد تسجيل المشتريات من سوق الجملة (الخضار والفاكهة)، هيتسجل هنا تلقائياً بالشهور والأيام، مع توتال الفلوس المدفوعة وحفظ التكلفة والبيع السابق والحالي لكل صنف.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPurInvoiceDate(new Date().toISOString().slice(0, 10));
+                        setPurItems([{ itemId: '', rawMaterialId: '', itemName: '', customName: '', isCustom: false, quantity: '', purchaseUnit: 'كجم', totalPrice: '', sellingPrice: '' }]);
+                        setPurPaidAmount('');
+                        setShowAddPurchaseModal(true);
+                      }}
+                      className="px-4 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold rounded-xl text-xs inline-flex items-center gap-1.5 shadow-lg shadow-cyan-500/20 cursor-pointer"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>+ تسجيل أول فاتورة توريد الآن</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
               </div>
             </div>
           )}
@@ -3534,7 +3984,17 @@ export default function AdminPage() {
             <p className="text-xs text-gray-400 mb-4">تسجيل بضاعة المشتريات من سوق الجملة وتحديث سعر التكلفة بالكاشير تلقائياً</p>
 
             <form onSubmit={handleAddPurchaseInvoice} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-300 mb-1">تاريخ التوريد / الشراء *</label>
+                  <input
+                    type="date"
+                    required
+                    value={purInvoiceDate}
+                    onChange={(e) => setPurInvoiceDate(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right font-mono focus:border-cyan-500"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs text-gray-300 mb-1">المورد / الوكالة</label>
                   <select value={purSupplierId} onChange={(e) => setPurSupplierId(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right">
@@ -3601,7 +4061,7 @@ export default function AdminPage() {
                               <option value="__CUSTOM__">صنف آخر (كتابة يدوية غير مسجلة)...</option>
                               {productCosts.map((p) => (
                                 <option key={p.id} value={p.id}>
-                                  {p.name} {p.cost ? `(تكلفة سابقة: ${p.cost} ج)` : ''}
+                                  {p.name} {p.cost ? `(تكلفة: ${p.cost} ج | بيع: ${p.price || 0} ج)` : ''}
                                 </option>
                               ))}
                             </select>
