@@ -2160,10 +2160,12 @@ export default function AdminPage() {
                           <span className={`text-xl font-bold font-mono ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             EGP {netProfit.toFixed(2)}
                           </span>
-                          <span className="text-[10px] text-gray-400">COGS: {cogs.toFixed(0)}</span>
+                          <span className="text-[10px] text-gray-300 font-mono bg-white/5 px-1.5 py-0.5 rounded border border-white/10" title="تكلفة البضاعة المباعة (COGS)">
+                            التكلفة: {cogs.toFixed(2)}
+                          </span>
                         </div>
-                        <span className="text-[10px] text-gray-500 mt-1 block">
-                          المبيعات - تكلفة الخامات والمصاريف
+                        <span className="text-[10px] text-gray-400 mt-1 block font-mono" title="صافي المبيعات - تكلفة البضاعة - المصاريف">
+                          المبيعات ({netSales.toFixed(2)}) - التكلفة ({cogs.toFixed(2)}) - المصاريف ({expenses.toFixed(2)})
                         </span>
                       </div>
 

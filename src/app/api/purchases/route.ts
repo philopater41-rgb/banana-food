@@ -247,7 +247,7 @@ export async function PATCH(request: Request) {
   }
 }
 
-// DELETE: Delete a purchase invoice
+// DELETE: Delete a purchase invoice and revert inventory stock & prices
 export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -257,8 +257,62 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'ID is required' }, { status: 400 });
     }
 
-    await prisma.purchaseInvoice.delete({
-      where: { id },
+    await prisma.$transaction(async (tx) => {
+      const invoice = await tx.purchaseInvoice.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!invoice) return;
+
+      for (const item of invoice.items) {
+        if (item.itemId) {
+          try {
+            const currentItem = await tx.item.findUnique({ where: { id: item.itemId } });
+            if (currentItem) {
+              const newStock = Math.max(0, (currentItem.stockQty || 0) - item.quantity);
+              const updateData: any = { stockQty: Number(newStock.toFixed(2)) };
+              if (item.previousCost !== null && item.previousCost !== undefined) {
+                updateData.cost = item.previousCost;
+              }
+              if (item.previousSellingPrice !== null && item.previousSellingPrice !== undefined) {
+                updateData.price = item.previousSellingPrice;
+              }
+              await tx.item.update({
+                where: { id: item.itemId },
+                data: updateData,
+              });
+            }
+          } catch (itemErr) {
+            console.warn('Could not revert Item on invoice delete:', itemErr);
+          }
+        }
+
+        if (item.rawMaterialId) {
+          try {
+            const rawMat = await tx.rawMaterial.findUnique({ where: { id: item.rawMaterialId } });
+            if (rawMat) {
+              const factor = rawMat.conversionFactor > 0 ? rawMat.conversionFactor : 1.0;
+              const deductQty = item.quantity * factor;
+              const newStock = Math.max(0, (rawMat.stockQty || 0) - deductQty);
+              const updateData: any = { stockQty: Number(newStock.toFixed(2)) };
+              if (item.previousCost !== null && item.previousCost !== undefined) {
+                updateData.costPerPurchaseUnit = item.previousCost;
+              }
+              await tx.rawMaterial.update({
+                where: { id: item.rawMaterialId },
+                data: updateData,
+              });
+            }
+          } catch (rawErr) {
+            console.warn('Could not revert RawMaterial on invoice delete:', rawErr);
+          }
+        }
+      }
+
+      await tx.purchaseInvoice.delete({
+        where: { id },
+      });
     });
 
     return NextResponse.json({ success: true });
