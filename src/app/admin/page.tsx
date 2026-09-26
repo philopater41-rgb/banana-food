@@ -774,16 +774,14 @@ export default function AdminPage() {
         throw new Error('يرجى اختيار صنف خضار / فاكهة واحد على الأقل وتحديد الكمية والسعر');
       }
 
-      const supp = suppliers.find((s) => s.id === purSupplierId);
-
       const res = await fetch('/api/purchases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          supplierId: purSupplierId || null,
-          supplierName: supp ? supp.name : null,
+          supplierId: null,
+          supplierName: null,
           invoiceDate: purInvoiceDate ? new Date(purInvoiceDate).toISOString() : undefined,
-          paymentMethod: purPaymentMethod,
+          paymentMethod: 'CASH',
           paidAmount: purPaidAmount ? parseFloat(purPaidAmount) : undefined,
           items: formattedItems,
         }),
@@ -2721,10 +2719,8 @@ export default function AdminPage() {
                     <thead className="bg-slate-900/80 text-gray-400 border-b border-white/5">
                       <tr>
                         <th className="p-3">رقم الفاتورة</th>
-                        <th className="p-3">المورد / الوكالة</th>
                         <th className="p-3">التاريخ</th>
                         <th className="p-3">أصناف الخضار والفاكهة المشتراة</th>
-                        <th className="p-3">طريقة الدفع</th>
                         <th className="p-3">إجمالي الفاتورة</th>
                         <th className="p-3">المدفوع</th>
                         <th className="p-3">المتبقي (آجل)</th>
@@ -2734,7 +2730,7 @@ export default function AdminPage() {
                     <tbody className="divide-y divide-white/5">
                       {purchaseInvoices.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="p-6 text-center text-gray-500">
+                          <td colSpan={7} className="p-6 text-center text-gray-500">
                             لم يتم تسجيل أي فواتير مشتريات وتوريد بعد. اضغط على "+ تسجيل فاتورة توريد ومشتريات" لإضافة أول فاتورة وتحديث تكلفة الأصناف.
                           </td>
                         </tr>
@@ -2742,28 +2738,10 @@ export default function AdminPage() {
                         purchaseInvoices.map((inv) => (
                           <tr key={inv.id} className="hover:bg-white/5 transition-colors">
                             <td className="p-3 font-mono font-bold text-white">{inv.invoiceNumber}</td>
-                            <td className="p-3 text-cyan-300 font-semibold">{inv.supplier?.name || inv.supplierName || 'مورد عام'}</td>
                             <td className="p-3 text-gray-400 font-mono text-[11px]">{new Date(inv.invoiceDate).toLocaleDateString('ar-EG')}</td>
                             <td className="p-3 max-w-xs">
                               <span className="text-gray-300 line-clamp-1" title={inv.items?.map((it: any) => `${it.itemName} (${it.quantity} ${it.purchaseUnit})`).join('، ')}>
                                 {inv.items?.map((it: any) => `${it.itemName} (${it.quantity} ${it.purchaseUnit})`).join('، ')}
-                              </span>
-                            </td>
-                            <td className="p-3">
-                              <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
-                                inv.paymentMethod === 'CASH'
-                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                  : inv.paymentMethod === 'INSTAPAY'
-                                  ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                              }`}>
-                                {inv.paymentMethod === 'CASH'
-                                  ? 'كاش نقدي'
-                                  : inv.paymentMethod === 'INSTAPAY'
-                                  ? 'إنستا باي'
-                                  : inv.paymentMethod === 'DEFERRED'
-                                  ? 'آجل على الحساب'
-                                  : inv.paymentMethod}
                               </span>
                             </td>
                             <td className="p-3 font-mono font-bold text-white">EGP {inv.totalAmount.toFixed(2)}</td>
@@ -4045,34 +4023,15 @@ export default function AdminPage() {
             <p className="text-xs text-gray-400 mb-4">تسجيل بضاعة المشتريات من سوق الجملة وتحديث سعر التكلفة بالكاشير تلقائياً</p>
 
             <form onSubmit={handleAddPurchaseInvoice} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-300 mb-1">تاريخ التوريد / الشراء *</label>
-                  <input
-                    type="date"
-                    required
-                    value={purInvoiceDate}
-                    onChange={(e) => setPurInvoiceDate(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right font-mono focus:border-cyan-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-300 mb-1">المورد / الوكالة</label>
-                  <select value={purSupplierId} onChange={(e) => setPurSupplierId(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right">
-                    <option value="">اختار تاجر / وكالة (أو اترك لمورد عام)...</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} {s.companyName ? `(${s.companyName})` : ''}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-300 mb-1">طريقة الدفع</label>
-                  <select value={purPaymentMethod} onChange={(e) => setPurPaymentMethod(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right">
-                    <option value="CASH">نقدي (كاش في التو)</option>
-                    <option value="INSTAPAY">تحويل إنستا باي (InstaPay)</option>
-                    <option value="DEFERRED">آجل على الحساب (مديونية للمورد)</option>
-                  </select>
-                </div>
+              <div className="max-w-xs">
+                <label className="block text-xs text-gray-300 mb-1">تاريخ التوريد / الشراء *</label>
+                <input
+                  type="date"
+                  required
+                  value={purInvoiceDate}
+                  onChange={(e) => setPurInvoiceDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white text-right font-mono focus:border-cyan-500"
+                />
               </div>
 
               {/* Items Rows */}
