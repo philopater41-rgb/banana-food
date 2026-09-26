@@ -1770,7 +1770,7 @@ export default function AdminPage() {
                     </span>
                     <span className="text-[10px] text-gray-400">تكلفة البضاعة (COGS): EGP {kpis.todayCOGS.toFixed(2)}</span>
                   </div>
-                  <span className="text-[10px] text-gray-500 mt-1 block">المبيعات - تكلفة الشراء والمصاريف</span>
+                  <span className="text-[10px] text-gray-500 mt-1 block">المبيعات - تكلفة الشراء (المصاريف تخصم شهرياً)</span>
                 </div>
 
                 <div className="glass-panel p-4 rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/20 to-transparent">
@@ -2164,8 +2164,11 @@ export default function AdminPage() {
                             التكلفة: {cogs.toFixed(2)}
                           </span>
                         </div>
-                        <span className="text-[10px] text-gray-400 mt-1 block font-mono" title="صافي المبيعات - تكلفة البضاعة - المصاريف">
-                          المبيعات ({netSales.toFixed(2)}) - التكلفة ({cogs.toFixed(2)}) - المصاريف ({expenses.toFixed(2)})
+                        <span className="text-[10px] text-gray-400 mt-1 block font-mono" title={isDaily ? "صافي المبيعات - تكلفة البضاعة (المصاريف تخصم من أرباح الشهر)" : "صافي المبيعات - تكلفة البضاعة - المصاريف"}>
+                          {isDaily
+                            ? `المبيعات (${netSales.toFixed(2)}) - التكلفة (${cogs.toFixed(2)}) (المصاريف تخصم من أرباح الشهر)`
+                            : `المبيعات (${netSales.toFixed(2)}) - التكلفة (${cogs.toFixed(2)}) - المصاريف (${expenses.toFixed(2)})`
+                          }
                         </span>
                       </div>
 

@@ -248,8 +248,9 @@ export async function GET() {
     const todayExpenses = (todayRestock._sum.amount || 0) + todayCashPayouts;
     const monthlyExpenses = (monthlyRestock._sum.amount || 0) + monthlyCashPayouts;
 
-    // Real Net Profit = Net Sales (after returns) - Real COGS - Operating Expenses
-    const todayNet = todaySales - todayCOGS - todayExpenses;
+    // Real Net Profit = Net Sales (after returns) - Real COGS
+    // Daily expenses are NOT deducted from today's net profit (they are deducted from monthly net profit)
+    const todayNet = todaySales - todayCOGS;
     const monthlyNet = monthlySales - monthlyCOGS - monthlyExpenses;
 
     // 8. Summarize Daily Sales & Monthly Sales by Shift Operating Date

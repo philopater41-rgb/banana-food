@@ -225,7 +225,8 @@ export async function GET(request: Request) {
       const returnsAmount = filteredReturns.reduce((sum, r) => sum + (r.totalRefund || 0), 0);
       const returnsCount = filteredReturns.length;
       const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-      const netProfit = totalNet - totalCOGS - totalExpenses;
+      // Daily expenses do not deduct from daily profit (expenses are deducted from monthly profits)
+      const netProfit = dateQuery ? (totalNet - totalCOGS) : (totalNet - totalCOGS - totalExpenses);
 
       return NextResponse.json({
         period: dateQuery ? { type: 'day', value: dateQuery } : { type: 'month', value: monthQuery },
@@ -529,7 +530,8 @@ export async function GET(request: Request) {
         totalNet: Number(d.totalNet.toFixed(2)),
         returnsAmount: Number(d.returnsAmount.toFixed(2)),
         cogs: Number(d.cogs.toFixed(2)),
-        netProfit: Number((d.netProfit - d.totalExpenses).toFixed(2)),
+        // Expenses are deducted from monthly profits, not daily profits
+        netProfit: Number(d.netProfit.toFixed(2)),
         avgTicket: d.ordersCount > 0 ? Number((d.totalNet / d.ordersCount).toFixed(2)) : 0,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
@@ -578,7 +580,8 @@ export async function GET(request: Request) {
           totalNet: Number(daysMap.get(todayStr)!.totalNet.toFixed(2)),
           returnsAmount: Number(daysMap.get(todayStr)!.returnsAmount.toFixed(2)),
           cogs: Number(daysMap.get(todayStr)!.cogs.toFixed(2)),
-          netProfit: Number((daysMap.get(todayStr)!.netProfit - daysMap.get(todayStr)!.totalExpenses).toFixed(2)),
+          // Do not deduct expenses from today's profit
+          netProfit: Number(daysMap.get(todayStr)!.netProfit.toFixed(2)),
           avgTicket:
             daysMap.get(todayStr)!.ordersCount > 0
               ? Number((daysMap.get(todayStr)!.totalNet / daysMap.get(todayStr)!.ordersCount).toFixed(2))
