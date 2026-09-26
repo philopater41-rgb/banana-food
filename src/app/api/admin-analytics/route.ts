@@ -276,8 +276,8 @@ export async function GET() {
     const todayNet = todaySales - todayCOGS;
     const monthlyNet = monthlySales - monthlyCOGS - monthlyExpenses;
 
-    // Net Revenue after supplies deduction (deducted from sales/revenue, NOT from profit)
-    const todayNetRevenueAfterSupplies = todaySales - todaySuppliesPaid;
+    // Net Revenue after supplies deduction (deducted from monthly sales only, NOT from today's sales)
+    const todayNetRevenueAfterSupplies = todaySales;
     const monthlyNetRevenueAfterSupplies = monthlySales - monthlySuppliesPaid;
 
     // 8. Summarize Daily Sales & Monthly Sales by Shift Operating Date

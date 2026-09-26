@@ -252,7 +252,8 @@ export async function GET(request: Request) {
         return sum + paid;
       }, 0);
 
-      const netRevenueAfterSupplies = totalNet - totalSuppliesPaid;
+      // Supplies are deducted from monthly sales only, NOT from daily sales
+      const netRevenueAfterSupplies = dateQuery ? totalNet : (totalNet - totalSuppliesPaid);
 
       const returnsAmount = filteredReturns.reduce((sum, r) => sum + (r.totalRefund || 0), 0);
       const returnsCount = filteredReturns.length;
@@ -636,7 +637,8 @@ export async function GET(request: Request) {
         totalExpenses: Number(d.totalExpenses.toFixed(2)),
         totalSuppliesPaid: Number((d.totalSuppliesPaid || 0).toFixed(2)),
         totalNet: Number(d.totalNet.toFixed(2)),
-        netRevenueAfterSupplies: Number((d.totalNet - (d.totalSuppliesPaid || 0)).toFixed(2)),
+        // Supplies are deducted from monthly sales only, NOT from daily sales
+        netRevenueAfterSupplies: Number(d.totalNet.toFixed(2)),
         returnsAmount: Number(d.returnsAmount.toFixed(2)),
         cogs: Number(d.cogs.toFixed(2)),
         // Expenses are deducted from monthly profits, not daily profits
@@ -693,7 +695,8 @@ export async function GET(request: Request) {
           totalExpenses: Number(daysMap.get(todayStr)!.totalExpenses.toFixed(2)),
           totalSuppliesPaid: Number((daysMap.get(todayStr)!.totalSuppliesPaid || 0).toFixed(2)),
           totalNet: Number(daysMap.get(todayStr)!.totalNet.toFixed(2)),
-          netRevenueAfterSupplies: Number((daysMap.get(todayStr)!.totalNet - (daysMap.get(todayStr)!.totalSuppliesPaid || 0)).toFixed(2)),
+          // Supplies are deducted from monthly sales only, NOT from daily sales
+          netRevenueAfterSupplies: Number(daysMap.get(todayStr)!.totalNet.toFixed(2)),
           returnsAmount: Number(daysMap.get(todayStr)!.returnsAmount.toFixed(2)),
           cogs: Number(daysMap.get(todayStr)!.cogs.toFixed(2)),
           // Do not deduct expenses or supplies from today's profit

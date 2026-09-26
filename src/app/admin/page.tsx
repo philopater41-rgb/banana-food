@@ -1762,28 +1762,12 @@ export default function AdminPage() {
               {/* Top Financial KPI Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="glass-panel p-4 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-transparent">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-gray-400 block">إجمالي مبيعات النهاردة (صافي)</span>
-                    {kpis.todaySuppliesPaid > 0 && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono font-bold border border-blue-500/30">
-                        توريد: -{kpis.todaySuppliesPaid.toFixed(0)} ج
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-[11px] text-gray-400 block">إجمالي مبيعات النهاردة (صافي)</span>
                   <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
                     <span className="text-2xl font-bold text-cyan-400 font-mono">EGP {kpis.todaySales.toFixed(2)}</span>
                     <span className="text-[10px] text-gray-400 font-semibold">{kpis.todayOrdersCount} فاتورة</span>
                   </div>
-                  {kpis.todaySuppliesPaid > 0 ? (
-                    <div className="mt-2 pt-1.5 border-t border-white/5 flex items-center justify-between text-[11px]">
-                      <span className="text-gray-300">الصافي بعد التوريد:</span>
-                      <span className="font-mono font-bold text-cyan-300 text-xs">
-                        EGP {kpis.todayNetRevenueAfterSupplies.toFixed(2)}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-[10px] text-gray-500 mt-1 block">متوسط الفاتورة: EGP {kpis.todayAvgTicket}</span>
-                  )}
+                  <span className="text-[10px] text-gray-500 mt-1 block">متوسط الفاتورة: EGP {kpis.todayAvgTicket}</span>
                 </div>
 
                 <div className="glass-panel p-4 rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-950/20 to-transparent">
@@ -2162,7 +2146,7 @@ export default function AdminPage() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+                    <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 ${isDaily ? 'xl:grid-cols-7' : 'xl:grid-cols-8'} gap-3`}>
                       {/* 1. Net Sales */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-transparent">
                         <span className="text-[11px] text-gray-400 block">
@@ -2179,28 +2163,30 @@ export default function AdminPage() {
                         </span>
                       </div>
 
-                      {/* 1.5 Net Revenue After Supplies */}
-                      <div className="glass-panel p-3.5 rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-950/30 via-slate-900/50 to-transparent">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-blue-300 block font-bold">
-                            {isDaily ? 'الصافي بعد التوريد' : 'صافي الشهر بعد التوريد'}
-                          </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold font-mono">
-                            {suppliesPaid > 0 ? `-${suppliesPaid.toFixed(0)}` : '0'}
+                      {/* 1.5 Net Revenue After Supplies (Shown only in monthly view) */}
+                      {!isDaily && (
+                        <div className="glass-panel p-3.5 rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-950/30 via-slate-900/50 to-transparent">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-blue-300 block font-bold">
+                              صافي الشهر بعد التوريد
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold font-mono">
+                              {suppliesPaid > 0 ? `-${suppliesPaid.toFixed(0)}` : '0'}
+                            </span>
+                          </div>
+                          <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
+                            <span className="text-xl font-bold text-blue-400 font-mono">
+                              EGP {netRevenueAfterSupplies.toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-gray-400">
+                              بعد توريد الشهر
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-gray-400 mt-1 block font-mono" title="المبيعات ناقص فلوس التوريد المدفوعة">
+                            المبيعات ({netSales.toFixed(2)}) - التوريد ({suppliesPaid.toFixed(2)})
                           </span>
                         </div>
-                        <div className="flex items-baseline justify-between mt-1 flex-row-reverse">
-                          <span className="text-xl font-bold text-blue-400 font-mono">
-                            EGP {netRevenueAfterSupplies.toFixed(2)}
-                          </span>
-                          <span className="text-[10px] text-gray-400">
-                            {isDaily ? 'بعد التوريد اليوم' : 'بعد توريد الشهر'}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-gray-400 mt-1 block font-mono" title="المبيعات ناقص فلوس التوريد المدفوعة">
-                          المبيعات ({netSales.toFixed(2)}) - التوريد ({suppliesPaid.toFixed(2)})
-                        </span>
-                      </div>
+                      )}
 
                       {/* 2. Net Profit */}
                       <div className="glass-panel p-3.5 rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-950/20 to-transparent">
@@ -2350,8 +2336,7 @@ export default function AdminPage() {
                           <th className="p-3.5">إجمالي المبيعات</th>
                           <th className="p-3.5">الخصومات</th>
                           <th className="p-3.5">المصاريف</th>
-                          <th className="p-3.5 text-blue-300">توريد البضاعة</th>
-                          <th className="p-3.5">الصافي بعد التوريد</th>
+                          <th className="p-3.5">الصافي المحصل</th>
                           <th className="p-3.5">تفصيل طرق الدفع</th>
                           <th className="p-3.5 text-center">استعراض الفواتير</th>
                         </tr>
@@ -2359,7 +2344,7 @@ export default function AdminPage() {
                       <tbody className="divide-y divide-white/5">
                         {loadingLedger ? (
                           <tr>
-                            <td colSpan={9} className="p-10 text-center text-gray-400">
+                            <td colSpan={8} className="p-10 text-center text-gray-400">
                               <div className="flex flex-col items-center justify-center gap-2">
                                 <Loader2 className="w-7 h-7 text-cyan-400 animate-spin" />
                                 <span className="text-xs font-semibold text-gray-300">جاري تحميل سجل الأيام من الداتابيز...</span>
@@ -2368,7 +2353,7 @@ export default function AdminPage() {
                           </tr>
                         ) : filteredDays.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="p-8 text-center text-gray-500">
+                            <td colSpan={8} className="p-8 text-center text-gray-500">
                               لا توجد مبيعات مسجلة في الأيام المحددة.
                             </td>
                           </tr>
@@ -2417,23 +2402,9 @@ export default function AdminPage() {
                                 )}
                               </td>
                               <td className="p-3.5 font-mono">
-                                {day.totalSuppliesPaid > 0 ? (
-                                  <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 font-bold border border-blue-500/30">
-                                    - EGP {day.totalSuppliesPaid.toFixed(2)}
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-500 text-xs">EGP 0.00</span>
-                                )}
-                              </td>
-                              <td className="p-3.5 font-mono">
                                 <span className="font-bold text-emerald-400 text-sm block">
-                                  EGP {(day.netRevenueAfterSupplies !== undefined ? day.netRevenueAfterSupplies : (day.totalNet - (day.totalSuppliesPaid || 0))).toFixed(2)}
+                                  EGP {day.totalNet.toFixed(2)}
                                 </span>
-                                {day.totalSuppliesPaid > 0 && (
-                                  <span className="text-[10px] text-gray-400 font-normal block">
-                                    المبيعات: {day.totalNet.toFixed(2)}
-                                  </span>
-                                )}
                               </td>
                               <td className="p-3.5">
                                 <div className="flex flex-wrap gap-1.5 text-[10px]">
@@ -5244,14 +5215,18 @@ export default function AdminPage() {
                     <span className="text-gray-300">
                       المصاريف: <strong className="text-orange-400 font-mono">EGP {(periodSummary.totalExpenses || 0).toFixed(2)}</strong>
                     </span>
-                    <span className="text-gray-500">•</span>
-                    <span className="text-gray-300">
-                      التوريد المدفوع: <strong className="text-blue-400 font-mono">EGP {(periodSummary.totalSuppliesPaid || 0).toFixed(2)}</strong>
-                    </span>
-                    <span className="text-gray-500">•</span>
-                    <span className="text-gray-300">
-                      الصافي بعد التوريد: <strong className="text-cyan-300 font-mono">EGP {(periodSummary.netRevenueAfterSupplies !== undefined ? periodSummary.netRevenueAfterSupplies : (periodSummary.totalNet - (periodSummary.totalSuppliesPaid || 0))).toFixed(2)}</strong>
-                    </span>
+                    {selectedPeriod.type === 'month' && (
+                      <>
+                        <span className="text-gray-500">•</span>
+                        <span className="text-gray-300">
+                          التوريد المدفوع: <strong className="text-blue-400 font-mono">EGP {(periodSummary.totalSuppliesPaid || 0).toFixed(2)}</strong>
+                        </span>
+                        <span className="text-gray-500">•</span>
+                        <span className="text-gray-300">
+                          الصافي بعد التوريد: <strong className="text-cyan-300 font-mono">EGP {(periodSummary.netRevenueAfterSupplies !== undefined ? periodSummary.netRevenueAfterSupplies : (periodSummary.totalNet - (periodSummary.totalSuppliesPaid || 0))).toFixed(2)}</strong>
+                        </span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
