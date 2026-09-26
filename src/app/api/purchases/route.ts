@@ -22,7 +22,6 @@ export async function GET(request: Request) {
         items: {
           include: {
             rawMaterial: { select: { id: true, name: true, purchaseUnit: true, deductUnit: true } },
-            item: { select: { id: true, name: true, cost: true, price: true, unit: true } },
           },
         },
       },

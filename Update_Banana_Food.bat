@@ -13,9 +13,6 @@ if exist "C:\Program Files\nodejs" (
     set "PATH=%PATH%;C:\Program Files\nodejs"
 )
 
-:: Enable ESM require support for Prisma 7 on Node 20
-set "NODE_OPTIONS=--experimental-require-module"
-
 where git >nul 2>&1
 if %errorlevel% neq 0 (
     echo [!] Git is not installed on this PC or not in PATH!
@@ -26,8 +23,8 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [1/4] Fetching latest updates from GitHub...
-echo [1/4] جاري سحب آخر التحديثات من GitHub...
+echo [1/3] Fetching latest updates from GitHub...
+echo [1/3] جاري سحب آخر التحديثات من GitHub...
 git pull origin main
 if %errorlevel% neq 0 (
     echo.
@@ -38,24 +35,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/4] Updating database client schema...
-echo [2/4] جاري تحديث برمجيات ومخطط قاعدة البيانات...
-if exist "prisma.config.ts" del /f /q "prisma.config.ts"
-call node --experimental-require-module ./node_modules/prisma/build/index.js generate --schema=prisma/schema.prisma
-if %errorlevel% neq 0 (
-    call npx prisma generate --schema=prisma/schema.prisma
-)
-if %errorlevel% neq 0 (
-    echo.
-    echo [!] Prisma generate failed.
-    echo [!] فشل تحديث مخطط قاعدة البيانات.
-    pause
-    exit /b 1
-)
-
-echo.
-echo [3/4] Compiling and building latest changes...
-echo [3/4] جاري عمل Build للتعديلات الجديدة...
+echo [2/3] Compiling and building latest changes...
+echo [2/3] جاري عمل Build للتعديلات الجديدة...
 call npm run build
 if %errorlevel% neq 0 (
     echo.
@@ -66,8 +47,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [4/4] Restarting background service...
-echo [4/4] إعادة تشغيل السيرفر بالتحديثات الجديدة...
+echo [3/3] Restarting background service...
+echo [3/3] إعادة تشغيل السيرفر بالتحديثات الجديدة...
 taskkill /f /im node.exe >nul 2>&1
 
 echo.
