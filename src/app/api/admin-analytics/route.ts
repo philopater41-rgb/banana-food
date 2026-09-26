@@ -204,13 +204,8 @@ export async function GET() {
     const todayCOGS = todayOrders.reduce((sum, o) => sum + calculateOrderCOGS(o), 0);
     const monthlyCOGS = monthOrders.reduce((sum, o) => sum + calculateOrderCOGS(o), 0);
 
-    // 7. Expenses: Restocks & Cash Transactions (EXCLUDING customer refunds to avoid double-deducting from net income)
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const [todayRestock, monthlyRestock, allCashTransactions] = await Promise.all([
-      prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } }),
-      prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfMonth } }, _sum: { amount: true } }),
+    // 7. Expenses & Supplies: Cash Transactions & Purchase Invoices
+    const [allCashTransactions, allPurchaseInvoices] = await Promise.all([
       prisma.cashTransaction.findMany({
         take: 100,
         orderBy: { createdAt: 'desc' },
@@ -222,6 +217,16 @@ export async function GET() {
               user: { select: { name: true } },
             },
           },
+        },
+      }),
+      prisma.purchaseInvoice.findMany({
+        select: {
+          id: true,
+          invoiceDate: true,
+          createdAt: true,
+          totalAmount: true,
+          paidAmount: true,
+          paymentMethod: true,
         },
       }),
     ]);
@@ -245,13 +250,35 @@ export async function GET() {
       }
     }
 
-    const todayExpenses = (todayRestock._sum.amount || 0) + todayCashPayouts;
-    const monthlyExpenses = (monthlyRestock._sum.amount || 0) + monthlyCashPayouts;
+    let todaySuppliesPaid = 0;
+    let monthlySuppliesPaid = 0;
+
+    for (const inv of allPurchaseInvoices) {
+      const invDate = inv.invoiceDate || inv.createdAt;
+      const invDayKey = getBusinessDateStr(invDate, false);
+      const invMonthKey = getBusinessDateStr(invDate, true);
+      const paid = (inv.paidAmount !== null && inv.paidAmount !== undefined ? inv.paidAmount : inv.totalAmount) || 0;
+
+      if (invDayKey === todayStr) {
+        todaySuppliesPaid += paid;
+      }
+      if (invMonthKey === thisMonthStr) {
+        monthlySuppliesPaid += paid;
+      }
+    }
+
+    const todayExpenses = todayCashPayouts;
+    const monthlyExpenses = monthlyCashPayouts;
 
     // Real Net Profit = Net Sales (after returns) - Real COGS
     // Daily expenses are NOT deducted from today's net profit (they are deducted from monthly net profit)
+    // Supplies are inventory purchases, NOT deducted from profit
     const todayNet = todaySales - todayCOGS;
     const monthlyNet = monthlySales - monthlyCOGS - monthlyExpenses;
+
+    // Net Revenue after supplies deduction (deducted from sales/revenue, NOT from profit)
+    const todayNetRevenueAfterSupplies = todaySales - todaySuppliesPaid;
+    const monthlyNetRevenueAfterSupplies = monthlySales - monthlySuppliesPaid;
 
     // 8. Summarize Daily Sales & Monthly Sales by Shift Operating Date
     const summarizeOrdersByShiftDate = (monthly = false) => {
@@ -409,6 +436,10 @@ export async function GET() {
         monthlyCOGS: Number(monthlyCOGS.toFixed(2)),
         todayExpenses: Number(todayExpenses.toFixed(2)),
         monthlyExpenses: Number(monthlyExpenses.toFixed(2)),
+        todaySuppliesPaid: Number(todaySuppliesPaid.toFixed(2)),
+        monthlySuppliesPaid: Number(monthlySuppliesPaid.toFixed(2)),
+        todayNetRevenueAfterSupplies: Number(todayNetRevenueAfterSupplies.toFixed(2)),
+        monthlyNetRevenueAfterSupplies: Number(monthlyNetRevenueAfterSupplies.toFixed(2)),
         todayNet: Number(todayNet.toFixed(2)),
         monthlyNet: Number(monthlyNet.toFixed(2)),
         activeShiftUser: activeShift ? (activeShift.cashierName || activeShift.user.name) : 'لا توجد وردية مفتوحة',

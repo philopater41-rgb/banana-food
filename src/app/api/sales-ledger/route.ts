@@ -96,7 +96,7 @@ export async function GET(request: Request) {
 
     // If specific date or month is requested, return detailed orders list for that period
     if (dateQuery || monthQuery) {
-      const [allOrders, allReturns, allExpenses] = await Promise.all([
+      const [allOrders, allReturns, allExpenses, allPurchases] = await Promise.all([
         prisma.salesOrder.findMany({
           where: {
             status: { in: ['COMPLETED', 'REFUNDED'] },
@@ -164,6 +164,20 @@ export async function GET(request: Request) {
             createdAt: true,
           },
         }),
+        prisma.purchaseInvoice.findMany({
+          orderBy: { invoiceDate: 'desc' },
+          select: {
+            id: true,
+            invoiceNumber: true,
+            supplierName: true,
+            invoiceDate: true,
+            createdAt: true,
+            totalAmount: true,
+            paidAmount: true,
+            paymentMethod: true,
+            notes: true,
+          },
+        }),
       ]);
 
       const filteredOrders = allOrders.filter((order) => {
@@ -222,10 +236,29 @@ export async function GET(request: Request) {
         }
       });
 
+      const filteredPurchases = allPurchases.filter((pur) => {
+        const purDate = pur.invoiceDate || pur.createdAt;
+        if (dateQuery) {
+          return getBusinessDateStr(purDate, false) === dateQuery;
+        }
+        if (monthQuery) {
+          return getBusinessDateStr(purDate, true) === monthQuery;
+        }
+        return true;
+      });
+
+      const totalSuppliesPaid = filteredPurchases.reduce((sum, p) => {
+        const paid = (p.paidAmount !== null && p.paidAmount !== undefined ? p.paidAmount : p.totalAmount) || 0;
+        return sum + paid;
+      }, 0);
+
+      const netRevenueAfterSupplies = totalNet - totalSuppliesPaid;
+
       const returnsAmount = filteredReturns.reduce((sum, r) => sum + (r.totalRefund || 0), 0);
       const returnsCount = filteredReturns.length;
       const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
       // Daily expenses do not deduct from daily profit (expenses are deducted from monthly profits)
+      // Supplies are inventory purchases and are NOT deducted from profit
       const netProfit = dateQuery ? (totalNet - totalCOGS) : (totalNet - totalCOGS - totalExpenses);
 
       return NextResponse.json({
@@ -235,7 +268,9 @@ export async function GET(request: Request) {
           totalSales: Number(totalSales.toFixed(2)),
           totalDiscounts: Number(totalDiscounts.toFixed(2)),
           totalExpenses: Number(totalExpenses.toFixed(2)),
+          totalSuppliesPaid: Number(totalSuppliesPaid.toFixed(2)),
           totalNet: Number(totalNet.toFixed(2)),
+          netRevenueAfterSupplies: Number(netRevenueAfterSupplies.toFixed(2)),
           returnsAmount: Number(returnsAmount.toFixed(2)),
           returnsCount,
           cogs: Number(totalCOGS.toFixed(2)),
@@ -245,11 +280,12 @@ export async function GET(request: Request) {
         },
         orders: filteredOrders,
         expenses: filteredExpenses,
+        purchases: filteredPurchases,
       });
     }
 
     // Default: Aggregate all orders into Days & Months summaries with Profit & Returns
-    const [orders, allReturns, allExpenses] = await Promise.all([
+    const [orders, allReturns, allExpenses, allPurchases] = await Promise.all([
       prisma.salesOrder.findMany({
         where: {
           status: { in: ['COMPLETED', 'REFUNDED'] },
@@ -313,6 +349,18 @@ export async function GET(request: Request) {
           createdAt: true,
         },
       }),
+      prisma.purchaseInvoice.findMany({
+        select: {
+          id: true,
+          invoiceNumber: true,
+          supplierName: true,
+          invoiceDate: true,
+          createdAt: true,
+          totalAmount: true,
+          paidAmount: true,
+          paymentMethod: true,
+        },
+      }),
     ]);
 
     const daysMap = new Map<
@@ -325,6 +373,7 @@ export async function GET(request: Request) {
         totalSales: number;
         totalDiscounts: number;
         totalExpenses: number;
+        totalSuppliesPaid: number;
         totalNet: number;
         returnsAmount: number;
         returnsCount: number;
@@ -345,6 +394,7 @@ export async function GET(request: Request) {
         totalSales: number;
         totalDiscounts: number;
         totalExpenses: number;
+        totalSuppliesPaid: number;
         totalNet: number;
         returnsAmount: number;
         returnsCount: number;
@@ -396,6 +446,7 @@ export async function GET(request: Request) {
           totalSales: 0,
           totalDiscounts: 0,
           totalExpenses: 0,
+          totalSuppliesPaid: 0,
           totalNet: 0,
           returnsAmount: 0,
           returnsCount: 0,
@@ -426,6 +477,7 @@ export async function GET(request: Request) {
           totalSales: 0,
           totalDiscounts: 0,
           totalExpenses: 0,
+          totalSuppliesPaid: 0,
           totalNet: 0,
           returnsAmount: 0,
           returnsCount: 0,
@@ -487,6 +539,7 @@ export async function GET(request: Request) {
           totalSales: 0,
           totalDiscounts: 0,
           totalExpenses: 0,
+          totalSuppliesPaid: 0,
           totalNet: 0,
           returnsAmount: 0,
           returnsCount: 0,
@@ -508,6 +561,7 @@ export async function GET(request: Request) {
           totalSales: 0,
           totalDiscounts: 0,
           totalExpenses: 0,
+          totalSuppliesPaid: 0,
           totalNet: 0,
           returnsAmount: 0,
           returnsCount: 0,
@@ -521,16 +575,72 @@ export async function GET(request: Request) {
       monthObj.totalExpenses += expAmount;
     }
 
+    // 4. Process Purchases (Supplies / توريدات البضاعة)
+    let grandTotalSuppliesPaid = 0;
+    for (const pur of allPurchases) {
+      const purDate = pur.invoiceDate || pur.createdAt;
+      const dayKey = getBusinessDateStr(purDate, false);
+      const monthKey = getBusinessDateStr(purDate, true);
+      const paid = (pur.paidAmount !== null && pur.paidAmount !== undefined ? pur.paidAmount : pur.totalAmount) || 0;
+      grandTotalSuppliesPaid += paid;
+
+      if (!daysMap.has(dayKey)) {
+        daysMap.set(dayKey, {
+          date: dayKey,
+          dayNameAr: formatArabicDay(purDate),
+          rawDate: purDate,
+          ordersCount: 0,
+          totalSales: 0,
+          totalDiscounts: 0,
+          totalExpenses: 0,
+          totalSuppliesPaid: 0,
+          totalNet: 0,
+          returnsAmount: 0,
+          returnsCount: 0,
+          cogs: 0,
+          netProfit: 0,
+          payments: { CASH: 0, VISA: 0, INSTAPAY: 0, VODAFONE_CASH: 0, CASH_OUT: 0 },
+        });
+      }
+      daysMap.get(dayKey)!.totalSuppliesPaid += paid;
+
+      if (!monthsMap.has(monthKey)) {
+        monthsMap.set(monthKey, {
+          month: monthKey,
+          monthNameAr: formatArabicMonth(purDate),
+          rawDate: purDate,
+          daysSet: new Set<string>(),
+          ordersCount: 0,
+          totalSales: 0,
+          totalDiscounts: 0,
+          totalExpenses: 0,
+          totalSuppliesPaid: 0,
+          totalNet: 0,
+          returnsAmount: 0,
+          returnsCount: 0,
+          cogs: 0,
+          netProfit: 0,
+          payments: { CASH: 0, VISA: 0, INSTAPAY: 0, VODAFONE_CASH: 0, CASH_OUT: 0 },
+        });
+      }
+      const monthObj = monthsMap.get(monthKey)!;
+      monthObj.daysSet.add(dayKey);
+      monthObj.totalSuppliesPaid += paid;
+    }
+
     const days = Array.from(daysMap.values())
       .map((d) => ({
         ...d,
         totalSales: Number(d.totalSales.toFixed(2)),
         totalDiscounts: Number(d.totalDiscounts.toFixed(2)),
         totalExpenses: Number(d.totalExpenses.toFixed(2)),
+        totalSuppliesPaid: Number((d.totalSuppliesPaid || 0).toFixed(2)),
         totalNet: Number(d.totalNet.toFixed(2)),
+        netRevenueAfterSupplies: Number((d.totalNet - (d.totalSuppliesPaid || 0)).toFixed(2)),
         returnsAmount: Number(d.returnsAmount.toFixed(2)),
         cogs: Number(d.cogs.toFixed(2)),
         // Expenses are deducted from monthly profits, not daily profits
+        // Supplies are inventory purchases, not deducted from profit
         netProfit: Number(d.netProfit.toFixed(2)),
         avgTicket: d.ordersCount > 0 ? Number((d.totalNet / d.ordersCount).toFixed(2)) : 0,
       }))
@@ -545,7 +655,9 @@ export async function GET(request: Request) {
         totalSales: Number(m.totalSales.toFixed(2)),
         totalDiscounts: Number(m.totalDiscounts.toFixed(2)),
         totalExpenses: Number(m.totalExpenses.toFixed(2)),
+        totalSuppliesPaid: Number((m.totalSuppliesPaid || 0).toFixed(2)),
         totalNet: Number(m.totalNet.toFixed(2)),
+        netRevenueAfterSupplies: Number((m.totalNet - (m.totalSuppliesPaid || 0)).toFixed(2)),
         returnsAmount: Number(m.returnsAmount.toFixed(2)),
         returnsCount: m.returnsCount,
         cogs: Number(m.cogs.toFixed(2)),
@@ -561,7 +673,9 @@ export async function GET(request: Request) {
       totalSales: 0,
       totalDiscounts: 0,
       totalExpenses: 0,
+      totalSuppliesPaid: 0,
       totalNet: 0,
+      netRevenueAfterSupplies: 0,
       returnsAmount: 0,
       returnsCount: 0,
       cogs: 0,
@@ -577,10 +691,12 @@ export async function GET(request: Request) {
           totalSales: Number(daysMap.get(todayStr)!.totalSales.toFixed(2)),
           totalDiscounts: Number(daysMap.get(todayStr)!.totalDiscounts.toFixed(2)),
           totalExpenses: Number(daysMap.get(todayStr)!.totalExpenses.toFixed(2)),
+          totalSuppliesPaid: Number((daysMap.get(todayStr)!.totalSuppliesPaid || 0).toFixed(2)),
           totalNet: Number(daysMap.get(todayStr)!.totalNet.toFixed(2)),
+          netRevenueAfterSupplies: Number((daysMap.get(todayStr)!.totalNet - (daysMap.get(todayStr)!.totalSuppliesPaid || 0)).toFixed(2)),
           returnsAmount: Number(daysMap.get(todayStr)!.returnsAmount.toFixed(2)),
           cogs: Number(daysMap.get(todayStr)!.cogs.toFixed(2)),
-          // Do not deduct expenses from today's profit
+          // Do not deduct expenses or supplies from today's profit
           netProfit: Number(daysMap.get(todayStr)!.netProfit.toFixed(2)),
           avgTicket:
             daysMap.get(todayStr)!.ordersCount > 0
@@ -601,7 +717,9 @@ export async function GET(request: Request) {
           totalSales: Number(monthsMap.get(thisMonthStr)!.totalSales.toFixed(2)),
           totalDiscounts: Number(monthsMap.get(thisMonthStr)!.totalDiscounts.toFixed(2)),
           totalExpenses: Number(monthsMap.get(thisMonthStr)!.totalExpenses.toFixed(2)),
+          totalSuppliesPaid: Number((monthsMap.get(thisMonthStr)!.totalSuppliesPaid || 0).toFixed(2)),
           totalNet: Number(monthsMap.get(thisMonthStr)!.totalNet.toFixed(2)),
+          netRevenueAfterSupplies: Number((monthsMap.get(thisMonthStr)!.totalNet - (monthsMap.get(thisMonthStr)!.totalSuppliesPaid || 0)).toFixed(2)),
           returnsAmount: Number(monthsMap.get(thisMonthStr)!.returnsAmount.toFixed(2)),
           cogs: Number(monthsMap.get(thisMonthStr)!.cogs.toFixed(2)),
           netProfit: Number((monthsMap.get(thisMonthStr)!.netProfit - monthsMap.get(thisMonthStr)!.totalExpenses).toFixed(2)),
@@ -625,7 +743,9 @@ export async function GET(request: Request) {
         totalSales: Number(grandTotalSales.toFixed(2)),
         totalDiscounts: Number(grandTotalDiscounts.toFixed(2)),
         totalExpenses: Number(grandTotalExpenses.toFixed(2)),
+        totalSuppliesPaid: Number(grandTotalSuppliesPaid.toFixed(2)),
         totalNet: Number(grandTotalNet.toFixed(2)),
+        netRevenueAfterSupplies: Number((grandTotalNet - grandTotalSuppliesPaid).toFixed(2)),
         returnsAmount: Number(grandReturnsAmount.toFixed(2)),
         returnsCount: allReturns.length,
         cogs: Number(grandTotalCOGS.toFixed(2)),
