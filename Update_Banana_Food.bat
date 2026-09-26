@@ -37,7 +37,8 @@ if %errorlevel% neq 0 (
 echo.
 echo [2/4] Updating database client schema...
 echo [2/4] جاري تحديث برمجيات ومخطط قاعدة البيانات...
-call npx prisma generate
+if exist "prisma.config.ts" del /f /q "prisma.config.ts"
+call npx prisma generate --schema=prisma/schema.prisma
 if %errorlevel% neq 0 (
     echo.
     echo [!] Prisma generate failed.
