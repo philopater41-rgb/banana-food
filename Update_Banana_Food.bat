@@ -13,6 +13,9 @@ if exist "C:\Program Files\nodejs" (
     set "PATH=%PATH%;C:\Program Files\nodejs"
 )
 
+:: Enable ESM require support for Prisma 7 on Node 20
+set "NODE_OPTIONS=--experimental-require-module"
+
 where git >nul 2>&1
 if %errorlevel% neq 0 (
     echo [!] Git is not installed on this PC or not in PATH!
@@ -38,7 +41,10 @@ echo.
 echo [2/4] Updating database client schema...
 echo [2/4] جاري تحديث برمجيات ومخطط قاعدة البيانات...
 if exist "prisma.config.ts" del /f /q "prisma.config.ts"
-call npx prisma generate --schema=prisma/schema.prisma
+call node --experimental-require-module ./node_modules/prisma/build/index.js generate --schema=prisma/schema.prisma
+if %errorlevel% neq 0 (
+    call npx prisma generate --schema=prisma/schema.prisma
+)
 if %errorlevel% neq 0 (
     echo.
     echo [!] Prisma generate failed.
