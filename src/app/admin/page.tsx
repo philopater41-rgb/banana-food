@@ -3890,42 +3890,24 @@ export default function AdminPage() {
                         <CreditCard className="w-3.5 h-3.5 text-cyan-400" />
                         <span>تفصيل تحصيلات الفترة حسب طريقة الدفع:</span>
                       </h4>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                         <div className="p-3 bg-slate-900/60 rounded-xl border border-emerald-500/20 flex items-center justify-between">
                           <div>
-                            <span className="text-gray-400 text-[11px] block">كاش في الدرج:</span>
+                            <span className="text-gray-400 text-[11px] block">كاش في الدرج (نقدي):</span>
                             <span className="font-mono font-bold text-emerald-400 text-sm mt-0.5 block">
                               EGP {(detailedReport.paymentBreakdown.CASH || 0).toFixed(2)}
                             </span>
                           </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">كاش</span>
+                          <span className="text-[10px] px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 font-bold">كاش بالدرج</span>
                         </div>
                         <div className="p-3 bg-slate-900/60 rounded-xl border border-purple-500/20 flex items-center justify-between">
                           <div>
-                            <span className="text-gray-400 text-[11px] block">تحويل إنستا باي:</span>
+                            <span className="text-gray-400 text-[11px] block">تحويل إنستا باي (InstaPay):</span>
                             <span className="font-mono font-bold text-purple-400 text-sm mt-0.5 block">
                               EGP {(detailedReport.paymentBreakdown.INSTAPAY || 0).toFixed(2)}
                             </span>
                           </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 font-bold">InstaPay</span>
-                        </div>
-                        <div className="p-3 bg-slate-900/60 rounded-xl border border-blue-500/20 flex items-center justify-between">
-                          <div>
-                            <span className="text-gray-400 text-[11px] block">فيزا / بطاقات:</span>
-                            <span className="font-mono font-bold text-blue-400 text-sm mt-0.5 block">
-                              EGP {(detailedReport.paymentBreakdown.VISA || 0).toFixed(2)}
-                            </span>
-                          </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-bold">Visa</span>
-                        </div>
-                        <div className="p-3 bg-slate-900/60 rounded-xl border border-rose-500/20 flex items-center justify-between">
-                          <div>
-                            <span className="text-gray-400 text-[11px] block">فودافون كاش:</span>
-                            <span className="font-mono font-bold text-rose-400 text-sm mt-0.5 block">
-                              EGP {(detailedReport.paymentBreakdown.VODAFONE_CASH || 0).toFixed(2)}
-                            </span>
-                          </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 font-bold">محفظة</span>
+                          <span className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-500/10 text-purple-400 font-bold">InstaPay</span>
                         </div>
                       </div>
                     </div>
