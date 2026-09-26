@@ -320,6 +320,8 @@ export default function AdminPage() {
           previousCost: number | null;
           currentSellingPrice: number | null;
           previousSellingPrice: number | null;
+          previousStock: number | null;
+          currentStock: number | null;
         }>;
       }>;
     }>();
@@ -382,6 +384,12 @@ export default function AdminPage() {
           previousCost: it.previousCost !== undefined && it.previousCost !== null ? it.previousCost : (it.item?.cost ?? null),
           currentSellingPrice: it.currentSellingPrice !== undefined && it.currentSellingPrice !== null ? it.currentSellingPrice : (it.item?.price ?? null),
           previousSellingPrice: it.previousSellingPrice !== undefined && it.previousSellingPrice !== null ? it.previousSellingPrice : null,
+          previousStock: it.previousStock !== undefined && it.previousStock !== null 
+            ? it.previousStock 
+            : (it.item?.stockQty !== undefined && it.item?.stockQty !== null ? Math.max(0, it.item.stockQty - it.quantity) : null),
+          currentStock: it.currentStock !== undefined && it.currentStock !== null 
+            ? it.currentStock 
+            : (it.item?.stockQty ?? it.quantity),
         });
       }
     }
@@ -3465,12 +3473,13 @@ export default function AdminPage() {
                                         <tr>
                                           <th className="p-3">صنف الخضار / الفاكهة</th>
                                           <th className="p-3">الكمية المدخلة</th>
+                                          <th className="p-3 text-gray-300">الكمية السابقة</th>
+                                          <th className="p-3 text-emerald-400 font-bold">الكمية الحالية</th>
                                           <th className="p-3 text-cyan-300 font-bold">إجمالي تكلفة الشراء</th>
                                           <th className="p-3 text-cyan-400 font-bold">سعر تكلفة الكيلو/الوحدة</th>
                                           <th className="p-3 text-gray-300">التكلفة السابقة</th>
                                           <th className="p-3 text-emerald-400 font-bold">سعر البيع الحالي</th>
                                           <th className="p-3 text-gray-300">سعر البيع السابق</th>
-                                          <th className="p-3">المورد وطريقة الدفع</th>
                                           <th className="p-3 text-center">إجراءات</th>
                                         </tr>
                                       </thead>
@@ -3488,7 +3497,21 @@ export default function AdminPage() {
                                                 <span>{it.itemName}</span>
                                               </td>
                                               <td className="p-3 font-mono font-semibold text-gray-200">
-                                                {it.quantity} {it.purchaseUnit}
+                                                +{it.quantity} {it.purchaseUnit}
+                                              </td>
+                                              <td className="p-3 font-mono text-gray-400">
+                                                {it.previousStock !== null && it.previousStock !== undefined ? (
+                                                  <span>{it.previousStock} {it.purchaseUnit}</span>
+                                                ) : (
+                                                  <span className="text-gray-600">-</span>
+                                                )}
+                                              </td>
+                                              <td className="p-3 font-mono font-bold text-emerald-400 bg-emerald-500/10">
+                                                {it.currentStock !== null && it.currentStock !== undefined ? (
+                                                  <span>{it.currentStock} {it.purchaseUnit}</span>
+                                                ) : (
+                                                  <span>{(it.previousStock ? it.previousStock + it.quantity : it.quantity)} {it.purchaseUnit}</span>
+                                                )}
                                               </td>
                                               <td className="p-3 font-mono font-bold text-cyan-300 text-sm">
                                                 {it.totalPrice.toFixed(2)} ج.م
@@ -3526,12 +3549,6 @@ export default function AdminPage() {
                                                 ) : (
                                                   <span className="text-gray-600">-</span>
                                                 )}
-                                              </td>
-                                              <td className="p-3">
-                                                <span className="text-gray-300 font-semibold block">{it.supplierName}</span>
-                                                <span className="text-[10px] text-gray-500 font-mono">
-                                                  {it.paymentMethod === 'CASH' ? 'نقدي (كاش)' : it.paymentMethod === 'INSTAPAY' ? 'إنستا باي' : 'آجل'}
-                                                </span>
                                               </td>
                                               <td className="p-3 text-center">
                                                 <button

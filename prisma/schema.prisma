@@ -226,6 +226,8 @@ model PurchaseInvoiceItem {
   previousCost         Float?          // Previous unit cost before this restock
   currentSellingPrice  Float?          // Selling price at this restock
   previousSellingPrice Float?          // Previous selling price before this restock
+  previousStock        Float?          // Previous stock before this restock
+  currentStock         Float?          // Current total stock after this restock
 }
 
 // 8. Sales Orders & Items

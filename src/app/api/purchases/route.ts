@@ -21,7 +21,8 @@ export async function GET(request: Request) {
         },
         items: {
           include: {
-            rawMaterial: { select: { id: true, name: true, purchaseUnit: true, deductUnit: true } },
+            item: { select: { id: true, name: true, cost: true, price: true, stockQty: true } },
+            rawMaterial: { select: { id: true, name: true, purchaseUnit: true, deductUnit: true, stockQty: true } },
           },
         },
       },
@@ -84,6 +85,8 @@ export async function POST(request: Request) {
 
         const prevCost = matchedItem ? matchedItem.cost : null;
         const prevPrice = matchedItem ? matchedItem.price : null;
+        const prevStock = matchedItem ? (matchedItem.stockQty || 0) : null;
+        const currStock = prevStock !== null ? Number((prevStock + qty).toFixed(2)) : qty;
         const currSelling = (it.sellingPrice !== undefined && it.sellingPrice !== '' && Number(it.sellingPrice) > 0)
           ? Number(it.sellingPrice)
           : (matchedItem ? matchedItem.price : null);
@@ -99,6 +102,8 @@ export async function POST(request: Request) {
           previousCost: prevCost,
           currentSellingPrice: currSelling,
           previousSellingPrice: prevPrice,
+          previousStock: prevStock,
+          currentStock: currStock,
           matchedItem,
         });
       }
@@ -127,6 +132,8 @@ export async function POST(request: Request) {
               previousCost: p.previousCost,
               currentSellingPrice: p.currentSellingPrice,
               previousSellingPrice: p.previousSellingPrice,
+              previousStock: p.previousStock,
+              currentStock: p.currentStock,
             })),
           },
         },
