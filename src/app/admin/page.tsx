@@ -3782,36 +3782,167 @@ export default function AdminPage() {
               {/* Report Summary Cards */}
               {detailedReport && (
                 <div className="space-y-6">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div className="glass-panel p-4 rounded-xl border border-white/5">
-                      <span className="text-[10px] text-gray-400 block">إجمالي الإيرادات للفترة</span>
+                  {/* Top KPI Cards Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {/* 1. Net Revenue */}
+                    <div className="glass-panel p-4 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-transparent">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-gray-400 block font-semibold">إجمالي المبيعات (صافي)</span>
+                        <span className="text-[10px] text-cyan-300 font-mono font-bold bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20">
+                          {detailedReport.summary.totalOrders} فاتورة
+                        </span>
+                      </div>
                       <span className="text-xl font-bold text-cyan-400 font-mono mt-1 block">
                         EGP {detailedReport.summary.totalNetRevenue.toFixed(2)}
                       </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block">
+                        متوسط الفاتورة: EGP {detailedReport.summary.avgTicket}
+                      </span>
                     </div>
-                    <div className="glass-panel p-4 rounded-xl border border-white/5">
-                      <span className="text-[10px] text-gray-400 block">التكلفة الفعلية (COGS)</span>
+
+                    {/* 2. COGS */}
+                    <div className="glass-panel p-4 rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/20 to-transparent">
+                      <span className="text-[11px] text-gray-400 block font-semibold">تكلفة البضاعة المباعة (COGS)</span>
                       <span className="text-xl font-bold text-amber-400 font-mono mt-1 block">
                         EGP {detailedReport.summary.totalCOGS.toFixed(2)}
                       </span>
-                    </div>
-                    <div className="glass-panel p-4 rounded-xl border border-white/5">
-                      <span className="text-[10px] text-gray-400 block">صافي الأرباح المحققة</span>
-                      <span className="text-xl font-bold text-emerald-400 font-mono mt-1 block">
-                        EGP {detailedReport.summary.overallNetProfit.toFixed(2)}
+                      <span className="text-[10px] text-gray-500 mt-1 block">
+                        تكلفة شراء الخامات التي بيعت بالفعل
                       </span>
                     </div>
-                    <div className="glass-panel p-4 rounded-xl border border-white/5">
-                      <span className="text-[10px] text-gray-400 block">نسبة هامش الربح الإجمالي</span>
-                      <span className="text-xl font-bold text-purple-300 font-mono mt-1 block">
-                        {detailedReport.summary.overallMarginPct}%
+
+                    {/* 3. Gross Profit (Goods) */}
+                    <div className="glass-panel p-4 rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-950/20 to-transparent">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-gray-400 block font-semibold">أرباح البضاعة المباعة</span>
+                        <span className="text-[10px] text-emerald-300 font-mono font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                          هامش {detailedReport.summary.overallMarginPct}%
+                        </span>
+                      </div>
+                      <span className={`text-xl font-bold font-mono mt-1 block ${detailedReport.summary.overallNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        EGP {detailedReport.summary.overallNetProfit.toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block">
+                        المبيعات - تكلفة شراء البضاعة
+                      </span>
+                    </div>
+
+                    {/* 4. Operating Expenses */}
+                    <div className="glass-panel p-4 rounded-2xl border border-orange-500/20 bg-gradient-to-br from-orange-950/20 to-transparent">
+                      <span className="text-[11px] text-gray-400 block font-semibold">مصاريف التشغيل للفترة</span>
+                      <span className="text-xl font-bold text-orange-400 font-mono mt-1 block">
+                        EGP {(detailedReport.summary.totalExpenses || 0).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block">
+                        نثريات ومصاريف إدارية مسجلة
+                      </span>
+                    </div>
+
+                    {/* 5. Net Profit After Expenses */}
+                    <div className="glass-panel p-4 rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-950/20 to-transparent">
+                      <span className="text-[11px] text-gray-400 block font-semibold">صافي الربح بعد المصاريف</span>
+                      <span className={`text-xl font-bold font-mono mt-1 block ${(detailedReport.summary.netProfitAfterExpenses ?? detailedReport.summary.overallNetProfit) >= 0 ? 'text-purple-300' : 'text-rose-400'}`}>
+                        EGP {(detailedReport.summary.netProfitAfterExpenses ?? (detailedReport.summary.overallNetProfit - (detailedReport.summary.totalExpenses || 0))).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block font-mono">
+                        ربح البضاعة - مصاريف التشغيل
+                      </span>
+                    </div>
+
+                    {/* 6. Total Supplies Paid */}
+                    <div className="glass-panel p-4 rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-950/20 to-transparent">
+                      <span className="text-[11px] text-blue-300 block font-semibold">توريد البضاعة المدفوع</span>
+                      <span className="text-xl font-bold text-blue-400 font-mono mt-1 block">
+                        EGP {(detailedReport.summary.totalSuppliesPaid || 0).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block">
+                        إجمالي فواتير المشتريات المسددة
+                      </span>
+                    </div>
+
+                    {/* 7. Net Sales After Supplies */}
+                    <div className="glass-panel p-4 rounded-2xl border border-teal-500/20 bg-gradient-to-br from-teal-950/20 to-transparent">
+                      <span className="text-[11px] text-teal-300 block font-semibold">صافي المبيعات بعد التوريد</span>
+                      <span className="text-xl font-bold text-teal-400 font-mono mt-1 block">
+                        EGP {(detailedReport.summary.netRevenueAfterSupplies ?? (detailedReport.summary.totalNetRevenue - (detailedReport.summary.totalSuppliesPaid || 0))).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block font-mono">
+                        المبيعات ({detailedReport.summary.totalNetRevenue.toFixed(0)}) - التوريد ({ (detailedReport.summary.totalSuppliesPaid || 0).toFixed(0)})
+                      </span>
+                    </div>
+
+                    {/* 8. Returns */}
+                    <div className="glass-panel p-4 rounded-2xl border border-rose-500/20 bg-gradient-to-br from-rose-950/20 to-transparent">
+                      <span className="text-[11px] text-gray-400 block font-semibold">إجمالي المرتجعات للفترة</span>
+                      <span className="text-xl font-bold text-rose-400 font-mono mt-1 block">
+                        EGP {(detailedReport.summary.totalReturnsAmount || 0).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1 block">
+                        مبالغ مستردة للعملاء
                       </span>
                     </div>
                   </div>
 
+                  {/* Payment Breakdown Bar */}
+                  {detailedReport.paymentBreakdown && (
+                    <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-2">
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <CreditCard className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>تفصيل تحصيلات الفترة حسب طريقة الدفع:</span>
+                      </h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div className="p-3 bg-slate-900/60 rounded-xl border border-emerald-500/20 flex items-center justify-between">
+                          <div>
+                            <span className="text-gray-400 text-[11px] block">كاش في الدرج:</span>
+                            <span className="font-mono font-bold text-emerald-400 text-sm mt-0.5 block">
+                              EGP {(detailedReport.paymentBreakdown.CASH || 0).toFixed(2)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">كاش</span>
+                        </div>
+                        <div className="p-3 bg-slate-900/60 rounded-xl border border-purple-500/20 flex items-center justify-between">
+                          <div>
+                            <span className="text-gray-400 text-[11px] block">تحويل إنستا باي:</span>
+                            <span className="font-mono font-bold text-purple-400 text-sm mt-0.5 block">
+                              EGP {(detailedReport.paymentBreakdown.INSTAPAY || 0).toFixed(2)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 font-bold">InstaPay</span>
+                        </div>
+                        <div className="p-3 bg-slate-900/60 rounded-xl border border-blue-500/20 flex items-center justify-between">
+                          <div>
+                            <span className="text-gray-400 text-[11px] block">فيزا / بطاقات:</span>
+                            <span className="font-mono font-bold text-blue-400 text-sm mt-0.5 block">
+                              EGP {(detailedReport.paymentBreakdown.VISA || 0).toFixed(2)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-bold">Visa</span>
+                        </div>
+                        <div className="p-3 bg-slate-900/60 rounded-xl border border-rose-500/20 flex items-center justify-between">
+                          <div>
+                            <span className="text-gray-400 text-[11px] block">فودافون كاش:</span>
+                            <span className="font-mono font-bold text-rose-400 text-sm mt-0.5 block">
+                              EGP {(detailedReport.paymentBreakdown.VODAFONE_CASH || 0).toFixed(2)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 font-bold">محفظة</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Items Breakdown Table */}
                   <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3">
-                    <h4 className="text-xs font-bold text-white">تفصيل مبيعات وأرباح الأصناف خلال الفترة</h4>
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <TrendingUp className="w-4 h-4 text-emerald-400" />
+                        <span>تفصيل مبيعات وأرباح الأصناف خلال الفترة</span>
+                      </h4>
+                      <span className="text-[11px] text-gray-400">
+                        عدد الأصناف المباعة: <strong className="text-white font-mono">{detailedReport.itemsSummary.length}</strong> صنف
+                      </span>
+                    </div>
+
                     <div className="overflow-x-auto rounded-xl border border-white/5">
                       <table className="w-full text-right text-xs min-w-[700px]">
                         <thead className="bg-slate-900/80 text-gray-400 border-b border-white/5">
@@ -3819,24 +3950,45 @@ export default function AdminPage() {
                             <th className="p-3">اسم الصنف</th>
                             <th className="p-3">القسم</th>
                             <th className="p-3">الكمية المباعة</th>
-                            <th className="p-3">إجمالي الإيرادات</th>
+                            <th className="p-3">إجمالي الإيرادات (صافي)</th>
                             <th className="p-3">التكلفة الإجمالية</th>
                             <th className="p-3">صافي الربح</th>
                             <th className="p-3">هامش الربح %</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                          {detailedReport.itemsSummary.map((it: any) => (
-                            <tr key={it.id} className="hover:bg-white/5">
-                              <td className="p-3 font-semibold text-white">{it.name}</td>
-                              <td className="p-3 text-gray-400">{it.categoryName}</td>
-                              <td className="p-3 font-bold text-white">{it.qtySold}</td>
-                              <td className="p-3 font-mono text-cyan-400">EGP {it.grossRevenue.toFixed(2)}</td>
-                              <td className="p-3 font-mono text-amber-400">EGP {it.totalCost.toFixed(2)}</td>
-                              <td className="p-3 font-mono font-bold text-emerald-400">EGP {it.netProfit.toFixed(2)}</td>
-                              <td className="p-3 font-bold text-purple-300">{it.marginPct}%</td>
+                          {detailedReport.itemsSummary.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="p-8 text-center text-gray-500">
+                                لا توجد أصناف مباعة مطابقة في هذه الفترة المحددة.
+                              </td>
                             </tr>
-                          ))}
+                          ) : (
+                            detailedReport.itemsSummary.map((it: any) => (
+                              <tr key={it.id} className="hover:bg-white/5 transition-colors">
+                                <td className="p-3 font-semibold text-white flex items-center gap-1.5">
+                                  <Package className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                  <span>{it.name}</span>
+                                </td>
+                                <td className="p-3 text-gray-400">{it.categoryName}</td>
+                                <td className="p-3 font-bold text-white font-mono">{it.qtySold} {it.unit || 'كجم'}</td>
+                                <td className="p-3 font-mono text-cyan-400 font-bold">EGP {it.grossRevenue.toFixed(2)}</td>
+                                <td className="p-3 font-mono text-amber-400 font-semibold">EGP {it.totalCost.toFixed(2)}</td>
+                                <td className={`p-3 font-mono font-bold ${it.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  EGP {it.netProfit.toFixed(2)}
+                                </td>
+                                <td className="p-3 font-bold">
+                                  <span className={`px-2 py-0.5 rounded text-[11px] font-mono ${
+                                    it.marginPct >= 20 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                                    it.marginPct > 0 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                                    'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  }`}>
+                                    {it.marginPct}%
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
